@@ -22,19 +22,7 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Fetch V8 prebuilt library
-        run: |
-          V8_VERSION=$(grep -A1 'name = "v8"' Cargo.lock | grep version | head -1 | sed 's/.*"\(.*\)"/\1/')
-          TARGET=$(rustc -vV | sed -n 's|host: ||p')
-          FILENAME="librusty_v8_release_${TARGET}.a.gz"
-          ARCHIVE="${{ runner.temp }}/rusty_v8/${FILENAME}"
-          mkdir -p "$(dirname "$ARCHIVE")"
-          if [ ! -f "$ARCHIVE" ]; then
-            URL="https://github.com/denoland/rusty_v8/releases/download/v${V8_VERSION}/${FILENAME}"
-            echo "Downloading V8 v${V8_VERSION} for ${TARGET}"
-            curl -L -f --retry 3 --retry-delay 5 -o "$ARCHIVE" "$URL"
-          fi
-          echo "RUSTY_V8_ARCHIVE=${ARCHIVE}" >> $GITHUB_ENV
+      - uses: ./.github/actions/fetch-v8
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets -- -D warnings
 
@@ -45,19 +33,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Fetch V8 prebuilt library
-        run: |
-          V8_VERSION=$(grep -A1 'name = "v8"' Cargo.lock | grep version | head -1 | sed 's/.*"\(.*\)"/\1/')
-          TARGET=$(rustc -vV | sed -n 's|host: ||p')
-          FILENAME="librusty_v8_release_${TARGET}.a.gz"
-          ARCHIVE="${{ runner.temp }}/rusty_v8/${FILENAME}"
-          mkdir -p "$(dirname "$ARCHIVE")"
-          if [ ! -f "$ARCHIVE" ]; then
-            URL="https://github.com/denoland/rusty_v8/releases/download/v${V8_VERSION}/${FILENAME}"
-            echo "Downloading V8 v${V8_VERSION} for ${TARGET}"
-            curl -L -f --retry 3 --retry-delay 5 -o "$ARCHIVE" "$URL"
-          fi
-          echo "RUSTY_V8_ARCHIVE=${ARCHIVE}" >> $GITHUB_ENV
+      - uses: ./.github/actions/fetch-v8
       - name: Verify version matches tag
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
@@ -98,19 +74,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Fetch V8 prebuilt library
-        run: |
-          V8_VERSION=$(grep -A1 'name = "v8"' Cargo.lock | grep version | head -1 | sed 's/.*"\(.*\)"/\1/')
-          TARGET=$(rustc -vV | sed -n 's|host: ||p')
-          FILENAME="librusty_v8_release_${TARGET}.a.gz"
-          ARCHIVE="${{ runner.temp }}/rusty_v8/${FILENAME}"
-          mkdir -p "$(dirname "$ARCHIVE")"
-          if [ ! -f "$ARCHIVE" ]; then
-            URL="https://github.com/denoland/rusty_v8/releases/download/v${V8_VERSION}/${FILENAME}"
-            echo "Downloading V8 v${V8_VERSION} for ${TARGET}"
-            curl -L -f --retry 3 --retry-delay 5 -o "$ARCHIVE" "$URL"
-          fi
-          echo "RUSTY_V8_ARCHIVE=${ARCHIVE}" >> $GITHUB_ENV
+      - uses: ./.github/actions/fetch-v8
       - name: Build all binaries (needed for integration tests)
         run: cargo build --workspace
       - run: cargo test --workspace --verbose
@@ -123,19 +87,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Fetch V8 prebuilt library
-        run: |
-          V8_VERSION=$(grep -A1 'name = "v8"' Cargo.lock | grep version | head -1 | sed 's/.*"\(.*\)"/\1/')
-          TARGET=$(rustc -vV | sed -n 's|host: ||p')
-          FILENAME="librusty_v8_release_${TARGET}.a.gz"
-          ARCHIVE="${{ runner.temp }}/rusty_v8/${FILENAME}"
-          mkdir -p "$(dirname "$ARCHIVE")"
-          if [ ! -f "$ARCHIVE" ]; then
-            URL="https://github.com/denoland/rusty_v8/releases/download/v${V8_VERSION}/${FILENAME}"
-            echo "Downloading V8 v${V8_VERSION} for ${TARGET}"
-            curl -L -f --retry 3 --retry-delay 5 -o "$ARCHIVE" "$URL"
-          fi
-          echo "RUSTY_V8_ARCHIVE=${ARCHIVE}" >> $GITHUB_ENV
+      - uses: ./.github/actions/fetch-v8
       - name: Publish crates in dependency order
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
@@ -199,6 +151,11 @@ jobs:
             (cd "artifacts/forgemax-windows-x86_64" && \
               zip -r "../../release/forgemax-v${VERSION}-windows-x86_64.zip" .)
           fi
+
+      - name: Generate SBOM
+        run: |
+          cargo install cargo-cyclonedx --locked
+          cargo cyclonedx --format json --output-file release/forgemax-sbom.json
 
       - name: Generate checksums
         run: |

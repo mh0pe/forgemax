@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! Audit event types for Forge gateway observability.
 //!
 //! Provides [`AuditEvent`] — a structured, serializable audit record

@@ -298,6 +298,35 @@ fn check_features() -> DoctorCheck {
     }
 }
 
+/// Get available system memory in MB.
+fn get_system_memory_mb() -> Option<u64> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("sysctl")
+            .args(["-n", "hw.memsize"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .and_then(|s| s.trim().parse::<u64>().ok())
+            .map(|b| b / (1024 * 1024))
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::fs::read_to_string("/proc/meminfo").ok().and_then(|s| {
+            s.lines()
+                .find(|l| l.starts_with("MemTotal:"))
+                .and_then(|l| l.split_whitespace().nth(1))
+                .and_then(|v| v.parse::<u64>().ok())
+                .map(|kb| kb / 1024)
+        })
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        None
+    }
+}
+
 /// Check available system memory.
 fn check_memory() -> DoctorCheck {
     #[cfg(target_os = "macos")]
@@ -384,6 +413,159 @@ fn check_memory() -> DoctorCheck {
     }
 }
 
+/// Check that worst-case worker memory usage won't exceed system RAM.
+fn check_memory_pressure(config_path: Option<&PathBuf>) -> DoctorCheck {
+    let config = match common::load_config(config_path) {
+        Ok(c) => c,
+        Err(_) => {
+            return DoctorCheck {
+                name: "memory_pressure".into(),
+                status: CheckStatus::Pass,
+                message: "no valid config to check".into(),
+                fix: None,
+            };
+        }
+    };
+
+    let max_concurrent = config.sandbox.max_concurrent.unwrap_or(4) as u64;
+    let max_heap_mb = config.sandbox.max_heap_mb.unwrap_or(256) as u64;
+    let worst_case_mb = max_concurrent * max_heap_mb;
+
+    match get_system_memory_mb() {
+        Some(available_mb) if available_mb > 0 => {
+            if worst_case_mb > available_mb * 80 / 100 {
+                DoctorCheck {
+                    name: "memory_pressure".into(),
+                    status: CheckStatus::Warn,
+                    message: format!(
+                        "worst-case memory: {} MB ({}x{} MB) exceeds 80% of {} MB system RAM",
+                        worst_case_mb, max_concurrent, max_heap_mb, available_mb
+                    ),
+                    fix: Some(format!(
+                        "Reduce max_concurrent (currently {}) or max_heap_mb (currently {})",
+                        max_concurrent, max_heap_mb
+                    )),
+                }
+            } else {
+                DoctorCheck {
+                    name: "memory_pressure".into(),
+                    status: CheckStatus::Pass,
+                    message: format!(
+                        "worst-case memory: {} MB ({}x{} MB), system has {} MB",
+                        worst_case_mb, max_concurrent, max_heap_mb, available_mb
+                    ),
+                    fix: None,
+                }
+            }
+        }
+        _ => DoctorCheck {
+            name: "memory_pressure".into(),
+            status: CheckStatus::Pass,
+            message: format!(
+                "worst-case memory: {} MB ({}x{} MB), could not detect system RAM",
+                worst_case_mb, max_concurrent, max_heap_mb
+            ),
+            fix: None,
+        },
+    }
+}
+
+/// Check that HTTP/SSE servers have circuit breakers configured.
+fn check_circuit_breakers(config_path: Option<&PathBuf>) -> DoctorCheck {
+    let config = match common::load_config(config_path) {
+        Ok(c) => c,
+        Err(_) => {
+            return DoctorCheck {
+                name: "circuit_breakers".into(),
+                status: CheckStatus::Pass,
+                message: "no valid config to check".into(),
+                fix: None,
+            };
+        }
+    };
+
+    let unprotected: Vec<&str> = config
+        .servers
+        .iter()
+        .filter(|(_, s)| s.transport == "sse" && s.circuit_breaker != Some(true))
+        .map(|(name, _)| name.as_str())
+        .collect();
+
+    if unprotected.is_empty() {
+        DoctorCheck {
+            name: "circuit_breakers".into(),
+            status: CheckStatus::Pass,
+            message: "all SSE servers have circuit breakers configured".into(),
+            fix: None,
+        }
+    } else {
+        DoctorCheck {
+            name: "circuit_breakers".into(),
+            status: CheckStatus::Warn,
+            message: format!(
+                "SSE servers without circuit breakers: {}",
+                unprotected.join(", ")
+            ),
+            fix: Some(format!(
+                "Add circuit_breaker = true to: {}",
+                unprotected.join(", ")
+            )),
+        }
+    }
+}
+
+/// Check that token/header values don't contain common formatting mistakes.
+fn check_token_formats(config_path: Option<&PathBuf>) -> DoctorCheck {
+    let config = match common::load_config(config_path) {
+        Ok(c) => c,
+        Err(_) => {
+            return DoctorCheck {
+                name: "token_formats".into(),
+                status: CheckStatus::Pass,
+                message: "no valid config to check".into(),
+                fix: None,
+            };
+        }
+    };
+
+    let mut issues = Vec::new();
+
+    for (name, server) in &config.servers {
+        for (key, value) in &server.headers {
+            if value.starts_with('"') || value.ends_with('"') {
+                issues.push(format!("{name}: {key} has embedded quotes"));
+            }
+            if value.contains('\n') || value.contains('\r') {
+                issues.push(format!("{name}: {key} contains newlines"));
+            }
+            if value.starts_with("Bearer ") && key.to_lowercase() != "authorization" {
+                issues.push(format!(
+                    "{name}: {key} has 'Bearer ' prefix (should be bare token)"
+                ));
+            }
+        }
+    }
+
+    if issues.is_empty() {
+        DoctorCheck {
+            name: "token_formats".into(),
+            status: CheckStatus::Pass,
+            message: "all header values look well-formed".into(),
+            fix: None,
+        }
+    } else {
+        DoctorCheck {
+            name: "token_formats".into(),
+            status: CheckStatus::Warn,
+            message: format!("potential token issues: {}", issues.join("; ")),
+            fix: Some(
+                "Check header values — remove quotes, newlines, and misplaced 'Bearer ' prefixes"
+                    .into(),
+            ),
+        }
+    }
+}
+
 /// Execute the doctor command.
 pub async fn execute(args: &DoctorArgs, config_path: Option<PathBuf>) -> Result<()> {
     let config_ref = config_path.as_ref();
@@ -396,6 +578,9 @@ pub async fn execute(args: &DoctorArgs, config_path: Option<PathBuf>) -> Result<
         check_groups(config_ref),
         check_features(),
         check_memory(),
+        check_memory_pressure(config_ref),
+        check_circuit_breakers(config_ref),
+        check_token_formats(config_ref),
     ];
 
     // Server connectivity check (async)
@@ -832,6 +1017,200 @@ timeout_secs = 1
             "memory check message should mention memory: {}",
             check.message
         );
+    }
+
+    #[test]
+    fn dr_20_memory_pressure_warns_high_usage() {
+        // Config with 16×512 MB = 8192 MB worst case
+        let dir = std::env::temp_dir().join("forge-doctor-test-mempressure-high");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("forge.toml");
+        std::fs::write(&path, "[sandbox]\nmax_concurrent = 16\nmax_heap_mb = 512\n").unwrap();
+        let check = check_memory_pressure(Some(&path));
+        // On most test machines (< 10 GB), this should warn.
+        // On very large machines it might pass, which is also correct.
+        assert!(
+            check.status == CheckStatus::Warn || check.status == CheckStatus::Pass,
+            "unexpected: {:?} - {}",
+            check.status,
+            check.message
+        );
+        assert!(
+            check.message.contains("8192"),
+            "should show 8192 MB: {}",
+            check.message
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn dr_21_memory_pressure_passes_low_usage() {
+        // Config with 2×64 MB = 128 MB worst case — should always pass
+        let dir = std::env::temp_dir().join("forge-doctor-test-mempressure-low");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("forge.toml");
+        std::fs::write(&path, "[sandbox]\nmax_concurrent = 2\nmax_heap_mb = 64\n").unwrap();
+        let check = check_memory_pressure(Some(&path));
+        assert_eq!(check.status, CheckStatus::Pass, "{}", check.message);
+        assert!(
+            check.message.contains("128"),
+            "should show 128 MB: {}",
+            check.message
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn dr_22_memory_pressure_defaults() {
+        // Config with no sandbox overrides — defaults to 4×256 = 1024 MB
+        let dir = std::env::temp_dir().join("forge-doctor-test-mempressure-default");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("forge.toml");
+        std::fs::write(
+            &path,
+            "[servers.test]\ncommand = \"test\"\ntransport = \"stdio\"\n",
+        )
+        .unwrap();
+        let check = check_memory_pressure(Some(&path));
+        assert_eq!(check.status, CheckStatus::Pass, "{}", check.message);
+        assert!(
+            check.message.contains("1024"),
+            "should show 1024 MB: {}",
+            check.message
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn dr_23_circuit_breakers_warns_unprotected_sse() {
+        let dir = std::env::temp_dir().join("forge-doctor-test-cb-warn");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("forge.toml");
+        std::fs::write(
+            &path,
+            r#"
+[servers.remote]
+transport = "sse"
+url = "http://example.com/sse"
+"#,
+        )
+        .unwrap();
+        let check = check_circuit_breakers(Some(&path));
+        assert_eq!(check.status, CheckStatus::Warn, "{}", check.message);
+        assert!(
+            check.message.contains("remote"),
+            "should mention server name: {}",
+            check.message
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn dr_24_circuit_breakers_passes_all_protected() {
+        let dir = std::env::temp_dir().join("forge-doctor-test-cb-pass");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("forge.toml");
+        std::fs::write(
+            &path,
+            r#"
+[servers.remote]
+transport = "sse"
+url = "http://example.com/sse"
+circuit_breaker = true
+"#,
+        )
+        .unwrap();
+        let check = check_circuit_breakers(Some(&path));
+        assert_eq!(check.status, CheckStatus::Pass, "{}", check.message);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn dr_25_circuit_breakers_ignores_stdio() {
+        let dir = std::env::temp_dir().join("forge-doctor-test-cb-stdio");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("forge.toml");
+        std::fs::write(
+            &path,
+            r#"
+[servers.local]
+command = "test"
+transport = "stdio"
+"#,
+        )
+        .unwrap();
+        let check = check_circuit_breakers(Some(&path));
+        assert_eq!(check.status, CheckStatus::Pass, "{}", check.message);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn dr_26_token_formats_detects_quoted_token() {
+        let dir = std::env::temp_dir().join("forge-doctor-test-token-quote");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("forge.toml");
+        std::fs::write(
+            &path,
+            r#"
+[servers.test]
+transport = "sse"
+url = "http://example.com/sse"
+headers = { x-api-key = "\"my-key\"" }
+"#,
+        )
+        .unwrap();
+        let check = check_token_formats(Some(&path));
+        assert_eq!(check.status, CheckStatus::Warn, "{}", check.message);
+        assert!(check.message.contains("quotes"), "{}", check.message);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn dr_27_token_formats_detects_bearer_prefix() {
+        let dir = std::env::temp_dir().join("forge-doctor-test-token-bearer");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("forge.toml");
+        std::fs::write(
+            &path,
+            r#"
+[servers.test]
+transport = "sse"
+url = "http://example.com/sse"
+headers = { x-api-key = "Bearer sk-12345" }
+"#,
+        )
+        .unwrap();
+        let check = check_token_formats(Some(&path));
+        assert_eq!(check.status, CheckStatus::Warn, "{}", check.message);
+        assert!(check.message.contains("Bearer"), "{}", check.message);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn dr_28_token_formats_passes_clean() {
+        let dir = std::env::temp_dir().join("forge-doctor-test-token-clean");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("forge.toml");
+        std::fs::write(
+            &path,
+            r#"
+[servers.test]
+transport = "sse"
+url = "http://example.com/sse"
+headers = { Authorization = "Bearer sk-12345", x-api-key = "clean-token" }
+"#,
+        )
+        .unwrap();
+        let check = check_token_formats(Some(&path));
+        assert_eq!(check.status, CheckStatus::Pass, "{}", check.message);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn dr_29_token_formats_no_config() {
+        let path = PathBuf::from("/nonexistent/forge.toml");
+        let check = check_token_formats(Some(&path));
+        assert_eq!(check.status, CheckStatus::Pass);
     }
 
     #[test]

@@ -4,6 +4,7 @@
 
 const https = require("https");
 const http = require("http");
+const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { execSync } = require("child_process");
@@ -91,6 +92,35 @@ function extractZip(buffer, destDir) {
   }
 }
 
+async function verifyChecksum(buffer, platformKey) {
+  const suffix = PLATFORM_MAP[platformKey];
+  const ext = platformKey.startsWith("win32") ? "zip" : "tar.gz";
+  const filename = `forgemax-v${VERSION}-${suffix}.${ext}`;
+  const checksumUrl = `https://github.com/${REPO}/releases/download/v${VERSION}/SHA256SUMS.txt`;
+
+  try {
+    const checksumData = await fetch(checksumUrl);
+    const lines = checksumData.toString("utf-8").split("\n");
+    const line = lines.find((l) => l.includes(filename));
+    if (!line) {
+      console.warn("Checksum not found for platform — skipping verification");
+      return;
+    }
+    const expected = line.split(/\s+/)[0];
+    const actual = crypto.createHash("sha256").update(buffer).digest("hex");
+    if (expected !== actual) {
+      throw new Error(
+        `SHA256 mismatch! Expected: ${expected}, got: ${actual}. ` +
+          `The downloaded binary may be corrupted or tampered with.`
+      );
+    }
+    console.log("SHA256 verified");
+  } catch (err) {
+    if (err.message.includes("SHA256 mismatch")) throw err;
+    console.warn(`Could not verify checksum: ${err.message}`);
+  }
+}
+
 async function install() {
   const platformKey = getPlatformKey();
   const url = getDownloadUrl(platformKey);
@@ -100,6 +130,8 @@ async function install() {
   console.log(`Downloading from ${url}`);
 
   const buffer = await fetch(url);
+
+  await verifyChecksum(buffer, platformKey);
 
   // Ensure bin directory exists
   fs.mkdirSync(BIN_DIR, { recursive: true });

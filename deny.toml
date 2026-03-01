@@ -1,0 +1,52 @@
+# cargo-deny configuration for Forgemax
+# https://embarkstudios.github.io/cargo-deny/
+#
+# Run: cargo deny check --all-features
+
+[graph]
+all-features = true
+
+[advisories]
+vulnerability = "deny"
+unmaintained = "warn"
+
+[licenses]
+unlicensed = "deny"
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "OpenSSL",
+    "Zlib",
+    "CC0-1.0",
+    "MPL-2.0",
+]
+copyleft = "deny"
+# Workspace crates use FSL-1.1-ALv2 (Functional Source License),
+# which is not a standard SPDX identifier. Allow it explicitly.
+exceptions = [
+    { allow = ["FSL-1.1-ALv2"], crate = "forge-cli" },
+    { allow = ["FSL-1.1-ALv2"], crate = "forge-sandbox" },
+    { allow = ["FSL-1.1-ALv2"], crate = "forge-sandbox-worker" },
+    { allow = ["FSL-1.1-ALv2"], crate = "forge-manifest" },
+    { allow = ["FSL-1.1-ALv2"], crate = "forge-server" },
+    { allow = ["FSL-1.1-ALv2"], crate = "forge-client" },
+    { allow = ["FSL-1.1-ALv2"], crate = "forge-config" },
+    { allow = ["FSL-1.1-ALv2"], crate = "forge-error" },
+    { allow = ["FSL-1.1-ALv2"], crate = "forge-audit" },
+    { allow = ["FSL-1.1-ALv2"], crate = "forge-test-server" },
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

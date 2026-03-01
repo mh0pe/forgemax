@@ -26,6 +26,18 @@ Forgemax's Code Mode approach draws inspiration from [Cloudflare's sandbox tool-
 
 LLMs are trained on billions of lines of code. They're better at writing `narsil.symbols.find({pattern: "handle_*"})` than picking the right tool from a 76-item JSON schema list.
 
+## Performance
+
+| Scenario | Raw MCP (tokens) | Forgemax (tokens) | Savings |
+|----------|------------------|-------------------|---------|
+| 10 tools | ~4,200 | ~1,100 | 73% |
+| 50 tools | ~20,700 | ~1,100 | 94% |
+| 76 tools | ~33,100 | ~1,100 | 96% |
+| 150 tools | ~61,800 | ~1,100 | 98% |
+
+Forgemax schema size is constant (~1,100 tokens) regardless of how many tools are connected.
+Run the benchmark yourself: `cargo run -p forge-manifest --example token_savings`
+
 ## Architecture
 
 ```

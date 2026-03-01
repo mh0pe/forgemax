@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! Typed error types for Forge gateway dispatcher traits.
 //!
 //! Provides [`DispatchError`] — the canonical error type for all dispatcher

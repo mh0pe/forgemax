@@ -24,19 +24,7 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Fetch V8 prebuilt library
-        run: |
-          V8_VERSION=$(grep -A1 'name = "v8"' Cargo.lock | grep version | head -1 | sed 's/.*"\(.*\)"/\1/')
-          TARGET=$(rustc -vV | sed -n 's|host: ||p')
-          FILENAME="librusty_v8_release_${TARGET}.a.gz"
-          ARCHIVE="${{ runner.temp }}/rusty_v8/${FILENAME}"
-          mkdir -p "$(dirname "$ARCHIVE")"
-          if [ ! -f "$ARCHIVE" ]; then
-            URL="https://github.com/denoland/rusty_v8/releases/download/v${V8_VERSION}/${FILENAME}"
-            echo "Downloading V8 v${V8_VERSION} for ${TARGET}"
-            curl -L -f --retry 3 --retry-delay 5 -o "$ARCHIVE" "$URL"
-          fi
-          echo "RUSTY_V8_ARCHIVE=${ARCHIVE}" >> $GITHUB_ENV
+      - uses: ./.github/actions/fetch-v8
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Clippy
@@ -53,19 +41,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Fetch V8 prebuilt library
-        run: |
-          V8_VERSION=$(grep -A1 'name = "v8"' Cargo.lock | grep version | head -1 | sed 's/.*"\(.*\)"/\1/')
-          TARGET=$(rustc -vV | sed -n 's|host: ||p')
-          FILENAME="librusty_v8_release_${TARGET}.a.gz"
-          ARCHIVE="${{ runner.temp }}/rusty_v8/${FILENAME}"
-          mkdir -p "$(dirname "$ARCHIVE")"
-          if [ ! -f "$ARCHIVE" ]; then
-            URL="https://github.com/denoland/rusty_v8/releases/download/v${V8_VERSION}/${FILENAME}"
-            echo "Downloading V8 v${V8_VERSION} for ${TARGET}"
-            curl -L -f --retry 3 --retry-delay 5 -o "$ARCHIVE" "$URL"
-          fi
-          echo "RUSTY_V8_ARCHIVE=${ARCHIVE}" >> $GITHUB_ENV
+      - uses: ./.github/actions/fetch-v8
       - name: Build all binaries (needed for integration tests)
         run: cargo build --workspace
       - name: Run tests
@@ -111,18 +87,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Fetch V8 prebuilt library
-        run: |
-          V8_VERSION=$(grep -A1 'name = "v8"' Cargo.lock | grep version | head -1 | sed 's/.*"\(.*\)"/\1/')
-          TARGET=$(rustc -vV | sed -n 's|host: ||p')
-          FILENAME="librusty_v8_release_${TARGET}.a.gz"
-          ARCHIVE="${{ runner.temp }}/rusty_v8/${FILENAME}"
-          mkdir -p "$(dirname "$ARCHIVE")"
-          if [ ! -f "$ARCHIVE" ]; then
-            URL="https://github.com/denoland/rusty_v8/releases/download/v${V8_VERSION}/${FILENAME}"
-            curl -L -f --retry 3 --retry-delay 5 -o "$ARCHIVE" "$URL"
-          fi
-          echo "RUSTY_V8_ARCHIVE=${ARCHIVE}" >> $GITHUB_ENV
+      - uses: ./.github/actions/fetch-v8
       - name: Run example validation tests
         run: cargo test -p forge-sandbox --test example_validation
 
@@ -133,18 +98,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Fetch V8 prebuilt library
-        run: |
-          V8_VERSION=$(grep -A1 'name = "v8"' Cargo.lock | grep version | head -1 | sed 's/.*"\(.*\)"/\1/')
-          TARGET=$(rustc -vV | sed -n 's|host: ||p')
-          FILENAME="librusty_v8_release_${TARGET}.a.gz"
-          ARCHIVE="${{ runner.temp }}/rusty_v8/${FILENAME}"
-          mkdir -p "$(dirname "$ARCHIVE")"
-          if [ ! -f "$ARCHIVE" ]; then
-            URL="https://github.com/denoland/rusty_v8/releases/download/v${V8_VERSION}/${FILENAME}"
-            curl -L -f --retry 3 --retry-delay 5 -o "$ARCHIVE" "$URL"
-          fi
-          echo "RUSTY_V8_ARCHIVE=${ARCHIVE}" >> $GITHUB_ENV
+      - uses: ./.github/actions/fetch-v8
       - name: Build with no default features
         run: cargo build --workspace --no-default-features
       - name: Test with no default features
@@ -158,18 +112,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Fetch V8 prebuilt library
-        run: |
-          V8_VERSION=$(grep -A1 'name = "v8"' Cargo.lock | grep version | head -1 | sed 's/.*"\(.*\)"/\1/')
-          TARGET=$(rustc -vV | sed -n 's|host: ||p')
-          FILENAME="librusty_v8_release_${TARGET}.a.gz"
-          ARCHIVE="${{ runner.temp }}/rusty_v8/${FILENAME}"
-          mkdir -p "$(dirname "$ARCHIVE")"
-          if [ ! -f "$ARCHIVE" ]; then
-            URL="https://github.com/denoland/rusty_v8/releases/download/v${V8_VERSION}/${FILENAME}"
-            curl -L -f --retry 3 --retry-delay 5 -o "$ARCHIVE" "$URL"
-          fi
-          echo "RUSTY_V8_ARCHIVE=${ARCHIVE}" >> $GITHUB_ENV
+      - uses: ./.github/actions/fetch-v8
       - name: Build release binary
         run: cargo build --release -p forge-cli
       - name: Create minimal test config
@@ -193,18 +136,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Fetch V8 prebuilt library
-        run: |
-          V8_VERSION=$(grep -A1 'name = "v8"' Cargo.lock | grep version | head -1 | sed 's/.*"\(.*\)"/\1/')
-          TARGET=$(rustc -vV | sed -n 's|host: ||p')
-          FILENAME="librusty_v8_release_${TARGET}.a.gz"
-          ARCHIVE="${{ runner.temp }}/rusty_v8/${FILENAME}"
-          mkdir -p "$(dirname "$ARCHIVE")"
-          if [ ! -f "$ARCHIVE" ]; then
-            URL="https://github.com/denoland/rusty_v8/releases/download/v${V8_VERSION}/${FILENAME}"
-            curl -L -f --retry 3 --retry-delay 5 -o "$ARCHIVE" "$URL"
-          fi
-          echo "RUSTY_V8_ARCHIVE=${ARCHIVE}" >> $GITHUB_ENV
+      - uses: ./.github/actions/fetch-v8
       - name: Build all binaries
         run: cargo build --release --workspace
       - name: Create test config with forge-test-server
@@ -222,6 +154,16 @@ jobs:
       - name: Run basic-tool-chaining example
         run: |
           ./target/release/forgemax run --config /tmp/forge-run-test.toml examples/basic-tool-chaining.js
+
+  deny:
+    name: Dependency policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          arguments: --all-features
 
   security:
     name: Security audit

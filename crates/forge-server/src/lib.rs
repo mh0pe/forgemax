@@ -38,25 +38,77 @@ const MAX_RESULT_CHARS: usize = 100_000;
 /// Truncate an oversized JSON result string, wrapping it with metadata.
 ///
 /// Short results pass through unchanged. Results exceeding [`MAX_RESULT_CHARS`]
-/// are cut at the last valid character boundary before the limit and wrapped in
-/// a JSON object with `_truncated`, `_original_chars`, `_shown_chars`, and `data`.
+/// are cut at a structure-aware boundary and wrapped in a JSON envelope with
+/// `_truncated`, `_data_is_fragment`, `_original_chars`, `_shown_chars`, and `data`.
+///
+/// The `data` field is a **string fragment**, not valid JSON — LLMs should not
+/// attempt to `JSON.parse()` it.
 fn truncate_result_if_needed(json: String) -> String {
     if json.len() <= MAX_RESULT_CHARS {
         return json;
     }
-    let shown = MAX_RESULT_CHARS.saturating_sub(200);
-    let end = json[..shown]
+    let budget = MAX_RESULT_CHARS.saturating_sub(300); // reserve for envelope
+    let cut_point = find_safe_cut_point(&json, budget);
+
+    serde_json::json!({
+        "_truncated": true,
+        "_data_is_fragment": true,
+        "_original_chars": json.len(),
+        "_shown_chars": cut_point,
+        "data": &json[..cut_point]
+    })
+    .to_string()
+}
+
+/// Find the best cut point that minimizes JSON breakage.
+///
+/// For pretty-printed JSON (which we produce via `serde_json::to_string_pretty`),
+/// cutting at a newline boundary means we always end on a complete line.
+/// Falls back to the last comma, then to a character boundary.
+fn find_safe_cut_point(json: &str, max_pos: usize) -> usize {
+    let limit = max_pos.min(json.len());
+    let search_region = &json[..limit];
+
+    // For pretty-printed JSON, cut at the last newline
+    if let Some(pos) = search_region.rfind('\n') {
+        if pos > limit / 2 {
+            return pos;
+        }
+    }
+
+    // Fallback: cut at the last comma (array/object separator)
+    if let Some(pos) = search_region.rfind(',') {
+        if pos > limit / 2 {
+            return pos + 1; // include the comma
+        }
+    }
+
+    // Final fallback: last valid character boundary
+    search_region
         .char_indices()
         .last()
         .map(|(i, c)| i + c.len_utf8())
-        .unwrap_or(0);
-    serde_json::json!({
-        "_truncated": true,
-        "_original_chars": json.len(),
-        "_shown_chars": end,
-        "data": &json[..end]
-    })
-    .to_string()
+        .unwrap_or(0)
+}
+
+/// Format a sandbox execution result for the LLM.
+///
+/// Shared between `search()` and `execute()` to avoid duplicated error handling.
+fn format_sandbox_result(
+    result: Result<serde_json::Value, impl std::fmt::Display>,
+) -> Result<String, String> {
+    match result {
+        Ok(value) => {
+            let json = serde_json::to_string_pretty(&value)
+                .map_err(|e| format!("result serialization failed: {e}"))?;
+            Ok(truncate_result_if_needed(json))
+        }
+        Err(e) => {
+            let msg = format!("{e}");
+            let clean = msg.strip_prefix("javascript error: ").unwrap_or(&msg);
+            Ok(serde_json::json!({"error": clean}).to_string())
+        }
+    }
 }
 
 /// The Forge MCP server handler.
@@ -258,26 +310,18 @@ impl ForgeServer {
             .to_json()
             .map_err(|e| format!("manifest serialization failed: {e}"))?;
 
-        match self
+        let result = self
             .executor
             .execute_search(&input.code, &manifest_json)
-            .await
-        {
-            Ok(result) => {
-                let json = serde_json::to_string_pretty(&result)
-                    .map_err(|e| format!("result serialization failed: {e}"))?;
-                tracing::info!(result_len = json.len(), "search: complete");
-                Ok(truncate_result_if_needed(json))
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "search: failed");
-                let msg = format!("{e}");
-                // JsError messages are already redacted at the op level; strip
-                // the internal "javascript error:" prefix for cleaner LLM output.
-                let clean = msg.strip_prefix("javascript error: ").unwrap_or(&msg);
-                Ok(serde_json::json!({"error": clean}).to_string())
-            }
+            .await;
+
+        if result.is_ok() {
+            tracing::info!("search: complete");
+        } else {
+            tracing::warn!("search: failed");
         }
+
+        format_sandbox_result(result)
     }
 
     /// Execute code against the tool API in a sandboxed V8 isolate.
@@ -345,7 +389,7 @@ impl ForgeServer {
             })
             .collect();
 
-        match self
+        let result = self
             .executor
             .execute_code_with_options(
                 &input.code,
@@ -355,23 +399,15 @@ impl ForgeServer {
                 Some(known_servers),
                 Some(known_tools),
             )
-            .await
-        {
-            Ok(result) => {
-                let json = serde_json::to_string_pretty(&result)
-                    .map_err(|e| format!("result serialization failed: {e}"))?;
-                tracing::info!(result_len = json.len(), "execute: complete");
-                Ok(truncate_result_if_needed(json))
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "execute: failed");
-                let msg = format!("{e}");
-                // JsError messages are already redacted at the op level; strip
-                // the internal "javascript error:" prefix for cleaner LLM output.
-                let clean = msg.strip_prefix("javascript error: ").unwrap_or(&msg);
-                Ok(serde_json::json!({"error": clean}).to_string())
-            }
+            .await;
+
+        if result.is_ok() {
+            tracing::info!("execute: complete");
+        } else {
+            tracing::warn!("execute: failed");
         }
+
+        format_sandbox_result(result)
     }
 }
 
@@ -634,6 +670,107 @@ mod tests {
         assert!(shown > 0, "should show some content");
         let data = parsed["data"].as_str().unwrap();
         assert_eq!(data.len(), shown, "data length should match _shown_chars");
+    }
+
+    #[test]
+    fn tr_02_truncate_cuts_at_newline() {
+        // Pretty-printed JSON should be cut at a newline boundary
+        let mut obj = serde_json::Map::new();
+        for i in 0..5000 {
+            obj.insert(format!("key_{i}"), serde_json::json!(format!("value_{i}")));
+        }
+        let pretty = serde_json::to_string_pretty(&obj).unwrap();
+        assert!(
+            pretty.len() > MAX_RESULT_CHARS,
+            "test fixture should exceed limit"
+        );
+
+        let result = truncate_result_if_needed(pretty);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let data = parsed["data"].as_str().unwrap();
+        // Should end at a newline (last char of the fragment)
+        assert!(
+            data.ends_with('\n') || data.ends_with(','),
+            "should cut at newline or comma boundary, but ends with: {:?}",
+            data.chars().last()
+        );
+    }
+
+    #[test]
+    fn tr_03_truncate_envelope_is_valid_json() {
+        let long = "x".repeat(MAX_RESULT_CHARS + 500);
+        let result = truncate_result_if_needed(long);
+        let parsed: serde_json::Value =
+            serde_json::from_str(&result).expect("envelope should be valid JSON");
+        assert!(parsed.is_object(), "envelope should be a JSON object");
+        assert!(parsed.get("_truncated").is_some());
+        assert!(parsed.get("data").is_some());
+    }
+
+    #[test]
+    fn tr_04_truncate_data_fragment_flag() {
+        let long = "y".repeat(MAX_RESULT_CHARS + 100);
+        let result = truncate_result_if_needed(long);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(
+            parsed["_data_is_fragment"], true,
+            "truncated results should carry _data_is_fragment flag"
+        );
+    }
+
+    #[test]
+    fn tr_05_truncate_minified_json_fallback() {
+        // Minified JSON (no newlines) should fall back to comma boundary
+        let items: Vec<String> = (0..20000).map(|i| format!("\"item_{i}\"")).collect();
+        let minified = format!("[{}]", items.join(","));
+        assert!(minified.len() > MAX_RESULT_CHARS);
+
+        let result = truncate_result_if_needed(minified);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["_truncated"], true);
+        let data = parsed["data"].as_str().unwrap();
+        // Should end at a comma boundary (includes the comma)
+        let trimmed = data.trim_end();
+        assert!(
+            trimmed.ends_with(',') || trimmed.ends_with('"'),
+            "minified JSON should cut at comma: ends with {:?}",
+            trimmed.chars().last()
+        );
+    }
+
+    #[test]
+    fn tr_06_truncate_unicode_safe() {
+        // Multi-byte UTF-8 should not be split mid-character
+        let emoji = "\u{1F600}"; // 4-byte emoji
+        let mut long = String::new();
+        while long.len() < MAX_RESULT_CHARS + 500 {
+            long.push_str(emoji);
+        }
+        let result = truncate_result_if_needed(long);
+        // Should not panic, and envelope should be valid JSON
+        let parsed: serde_json::Value =
+            serde_json::from_str(&result).expect("unicode truncation should produce valid JSON");
+        assert_eq!(parsed["_truncated"], true);
+    }
+
+    #[test]
+    fn tr_07_format_sandbox_result_ok() {
+        let value = serde_json::json!({"result": "hello"});
+        let result = format_sandbox_result(Ok::<_, String>(value));
+        assert!(result.is_ok());
+        let json = result.unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["result"], "hello");
+    }
+
+    #[test]
+    fn tr_08_format_sandbox_result_err_strips_prefix() {
+        let err = "javascript error: some problem";
+        let result = format_sandbox_result(Err::<serde_json::Value, _>(err));
+        assert!(result.is_ok());
+        let json = result.unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["error"], "some problem");
     }
 
     // --- Phase R3: FORGE_DTS in instructions ---

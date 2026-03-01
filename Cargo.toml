@@ -14,11 +14,19 @@ members = [
 ]
 
 [workspace.package]
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 license = "FSL-1.1-ALv2"
 rust-version = "1.91.1"
 repository = "https://github.com/postrv/forgemax"
+
+[workspace.lints.clippy]
+# Production code should avoid panicking APIs — use proper error handling.
+# These are warnings (not deny) so test code is unaffected by CI -D warnings
+# when using #[cfg_attr(test, allow(...))] or per-module allows.
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
 
 [profile.release]
 lto = true
@@ -28,7 +36,7 @@ strip = true
 
 [workspace.dependencies]
 # Core runtime
-deno_core = "0.385"
+deno_core = "0.387"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
@@ -48,7 +56,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # MCP protocol
-rmcp = { version = "0.16", features = ["server", "macros", "transport-io"] }
+rmcp = { version = "0.17", features = ["server", "macros", "transport-io"] }
 schemars = "1.0"
 
 # AST validation (oxc)
@@ -75,10 +83,10 @@ uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 
 # Internal crates
-forge-sandbox = { path = "crates/forge-sandbox", version = "0.4.0" }
-forge-manifest = { path = "crates/forge-manifest", version = "0.4.0" }
-forge-server = { path = "crates/forge-server", version = "0.4.0" }
-forge-client = { path = "crates/forge-client", version = "0.4.0" }
-forge-config = { path = "crates/forge-config", version = "0.4.0" }
-forge-error = { path = "crates/forge-error", version = "0.4.0" }
-forge-audit = { path = "crates/forge-audit", version = "0.4.0" }
+forge-sandbox = { path = "crates/forge-sandbox", version = "0.4.1" }
+forge-manifest = { path = "crates/forge-manifest", version = "0.4.1" }
+forge-server = { path = "crates/forge-server", version = "0.4.1" }
+forge-client = { path = "crates/forge-client", version = "0.4.1" }
+forge-config = { path = "crates/forge-config", version = "0.4.1" }
+forge-error = { path = "crates/forge-error", version = "0.4.1" }
+forge-audit = { path = "crates/forge-audit", version = "0.4.1" }

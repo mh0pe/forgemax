@@ -2,6 +2,39 @@
 
 All notable changes to Forgemax will be documented in this file.
 
+## [0.4.1] - 2026-03-01
+
+### Added
+
+- **SHA256 installer verification:** Both `install.sh` and `npm/install.js` now verify downloaded archive checksums against `SHA256SUMS.txt` from the release. Falls back gracefully for older releases.
+- **Doctor memory pressure check:** `forgemax doctor` calculates worst-case memory usage (`max_concurrent` x `max_heap_mb`) and warns if it exceeds 80% of system RAM.
+- **Doctor circuit breaker check:** Warns when SSE servers are configured without circuit breakers.
+- **Doctor token format check:** Detects common token mistakes (embedded quotes, newlines, misplaced `Bearer` prefix) in header values.
+- **`cargo deny` CI job:** License compliance, advisory, ban, and source policy checking via `deny.toml`.
+- **V8 fetch composite action:** `.github/actions/fetch-v8/action.yml` replaces 10+ duplicated V8 download blocks across CI workflows.
+- **CycloneDX SBOM:** `forgemax-sbom.json` is now attached to every GitHub release.
+- **Token savings benchmark:** `cargo run -p forge-manifest --example token_savings` — measures and reports context window savings.
+- **Performance section in README:** Measured token savings table (73-98% reduction depending on tool count).
+- **Workspace clippy lint policy:** `[workspace.lints.clippy]` declares `unwrap_used`, `expect_used`, `panic` as warnings (opt-in per crate).
+- **`#![warn(missing_docs)]`** added to `forge-error` and `forge-audit`.
+
+### Changed
+
+- **Structure-aware truncation:** `truncate_result_if_needed` now cuts at newline/comma boundaries instead of arbitrary character positions. Adds `_data_is_fragment: true` flag to truncated results so LLMs know not to `JSON.parse()` the fragment.
+- **Error handling dedup:** Extracted `format_sandbox_result()` helper to eliminate duplicated error formatting between `search()` and `execute()`.
+- **forge.d.ts:** Added truncation behavior documentation.
+- **Test count:** ~800 tests (up from ~740).
+
+### Changed (Dependencies)
+
+- **deno_core:** 0.385 → 0.387
+- **rmcp:** 0.16 → 0.17
+- **v8:** 145 → 146.1
+
+### Fixed
+
+- **Truncation safety:** Truncated results no longer produce invalid JSON fragments inside the `data` field. Cut points are now structure-aware.
+
 ## [0.4.0] - 2026-03-01
 
 ### Added

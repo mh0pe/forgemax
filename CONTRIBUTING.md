@@ -16,7 +16,7 @@ cargo build --workspace
 ### Running Tests
 
 ```bash
-# Full test suite (~700 tests)
+# Full test suite (~800 tests)
 cargo test --workspace
 
 # Single crate
@@ -81,6 +81,19 @@ Integration tests use `forge-test-server`, a mock MCP server with tools:
 4. Ensure `cargo clippy --workspace -- -D warnings` is clean
 5. Update CHANGELOG.md with your changes
 6. Submit a pull request with a clear description
+
+## Release Checklist
+
+1. Bump version in workspace `Cargo.toml` and `npm/package.json`
+2. Update `CHANGELOG.md` with all changes
+3. Update `UPGRADE.md` if any migration steps are needed
+4. Run full test suite: `cargo test --workspace`
+5. Run `cargo clippy --workspace -- -D warnings`
+6. Run `cargo deny check` (if `deny.toml` exists)
+7. Tag: `git tag vX.Y.Z && git push --tags`
+8. Verify CI: checksums, SBOM, all platforms green
+9. Verify install: `curl -fsSL .../install.sh | bash` on a fresh machine
+10. Publish npm: `cd npm && npm publish`
 
 ## Vulnerability Reporting
 

@@ -3,6 +3,10 @@
  *
  * These type definitions describe the APIs available inside the V8 sandbox.
  * Code submitted to `execute()` and `search()` runs in this environment.
+ *
+ * **Truncation:** Results exceeding 100,000 characters are truncated.
+ * Truncated results have: `{ _truncated: true, _data_is_fragment: true, data: string }`.
+ * The `data` field is a string fragment, NOT valid JSON — do not `JSON.parse()` it.
  */
 
 /** Result of calling a tool on a downstream MCP server. */

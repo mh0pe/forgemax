@@ -503,9 +503,9 @@ dependencies = [
 
 [[package]]
 name = "deno_core"
-version = "0.385.0"
+version = "0.387.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e348ea58ad12f6bee5407768b571a8af09756246a45c83dfd27a5aeeb338c5eb"
+checksum = "05ff87ea269f345c07d29d69237af40b048cfb4274329823eed9abe749f9f3c0"
 dependencies = [
  "anyhow",
  "az",
@@ -523,6 +523,7 @@ dependencies = [
  "deno_unsync",
  "futures",
  "indexmap",
+ "inventory",
  "libc",
  "parking_lot",
  "percent-encoding",
@@ -573,9 +574,9 @@ dependencies = [
 
 [[package]]
 name = "deno_ops"
-version = "0.261.0"
+version = "0.263.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86077bea01b43941082edef61e150fa661bab25a839f17592bb763faaae0c14b"
+checksum = "b80c3d956d1a8eb9db6a44f263bdf93a6db52c69668c5be8a0664ae9dde71f6a"
 dependencies = [
  "indexmap",
  "proc-macro2",
@@ -736,7 +737,7 @@ checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
 name = "forge-audit"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "chrono",
  "serde",
@@ -745,7 +746,7 @@ dependencies = [
 
 [[package]]
 name = "forge-cli"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -768,7 +769,7 @@ dependencies = [
 
 [[package]]
 name = "forge-client"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -787,7 +788,7 @@ dependencies = [
 
 [[package]]
 name = "forge-config"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "notify",
  "serde",
@@ -802,7 +803,7 @@ dependencies = [
 
 [[package]]
 name = "forge-error"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "serde",
@@ -813,7 +814,7 @@ dependencies = [
 
 [[package]]
 name = "forge-manifest"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "arc-swap",
  "serde",
@@ -822,7 +823,7 @@ dependencies = [
 
 [[package]]
 name = "forge-sandbox"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -852,7 +853,7 @@ dependencies = [
 
 [[package]]
 name = "forge-sandbox-worker"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -867,7 +868,7 @@ dependencies = [
 
 [[package]]
 name = "forge-server"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -884,7 +885,7 @@ dependencies = [
 
 [[package]]
 name = "forge-test-server"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "rmcp",
  "schemars",
@@ -1398,6 +1399,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e0242819d153cba4b4b05a5a8f2a7e9bbf97b6055b2a002b395c96b5ff3c0222"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "inventory"
+version = "0.3.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "009ae045c87e7082cb72dab0ccd01ae075dd00141ddc108f43a0ea150a9e7227"
+dependencies = [
+ "rustversion",
 ]
 
 [[package]]
@@ -2243,9 +2253,9 @@ dependencies = [
 
 [[package]]
 name = "rmcp"
-version = "0.16.0"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc4c9c94680f75470ee8083a0667988b5d7b5beb70b9f998a8e51de7c682ce60"
+checksum = "8a0ce46f9101dc911f07e1468084c057839d15b08040d110820c5513312ef56a"
 dependencies = [
  "async-trait",
  "base64",
@@ -2270,9 +2280,9 @@ dependencies = [
 
 [[package]]
 name = "rmcp-macros"
-version = "0.16.0"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90c23c8f26cae4da838fbc3eadfaecf2d549d97c04b558e7bd90526a9c28b42a"
+checksum = "abad6f5f46e220e3bda2fc90fd1ad64c1c2a2bd716d52c845eb5c9c64cda7542"
 dependencies = [
  "darling",
  "proc-macro2",
@@ -2459,9 +2469,9 @@ dependencies = [
 
 [[package]]
 name = "serde_v8"
-version = "0.294.0"
+version = "0.296.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8386a10eddc03e63b28ad6963dbd0552470b430419d81fd6409e19e28146a3c8"
+checksum = "8d28324e48c5fba167780aa8968fcb288612b34157c343aa72d7e79ed694eb66"
 dependencies = [
  "deno_error",
  "num-bigint",
@@ -3123,9 +3133,9 @@ dependencies = [
 
 [[package]]
 name = "v8"
-version = "145.0.0"
+version = "146.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61d9a107e16bae35a0be2bb0096ac1d2318aac352c82edd796ab2b9cac66d8f0"
+checksum = "70bb6bcbb6a406fd720dad66d85337bd401d8276c7276f6a86164af6e1c57118"
 dependencies = [
  "bindgen",
  "bitflags 2.11.0",

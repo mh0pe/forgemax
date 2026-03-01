@@ -71,6 +71,52 @@ download() {
   fi
 }
 
+# Detect available SHA256 command
+detect_sha256_cmd() {
+  if command -v sha256sum &>/dev/null; then
+    echo "sha256sum"
+  elif command -v shasum &>/dev/null; then
+    echo "shasum -a 256"
+  else
+    echo ""
+  fi
+}
+
+# Verify SHA256 checksum of downloaded archive
+verify_checksum() {
+  local archive_file="$1" version="$2" platform="$3"
+  local sha_cmd checksum_url checksum_file expected actual
+
+  sha_cmd="$(detect_sha256_cmd)"
+  if [ -z "$sha_cmd" ]; then
+    warn "No SHA256 tool found — skipping verification"
+    return 0
+  fi
+
+  checksum_url="https://github.com/${REPO}/releases/download/v${version}/SHA256SUMS.txt"
+  checksum_file="$(mktemp)"
+
+  if download "$checksum_url" "$checksum_file" 2>/dev/null; then
+    expected=$(grep "forgemax-v${version}-${platform}.tar.gz" "$checksum_file" | awk '{print $1}')
+    if [ -n "$expected" ]; then
+      actual=$($sha_cmd "$archive_file" | awk '{print $1}')
+      if [ "$expected" != "$actual" ]; then
+        error "SHA256 mismatch! Expected: ${expected}, got: ${actual}"
+        error "The downloaded binary may be corrupted or tampered with."
+        rm -f "$archive_file" "$checksum_file"
+        exit 1
+      fi
+      info "SHA256 verified"
+    else
+      warn "Checksum not found for platform — skipping verification"
+    fi
+    rm -f "$checksum_file"
+  else
+    warn "Could not download checksums — skipping verification"
+    rm -f "$checksum_file"
+  fi
+}
+
 main() {
   local platform version archive_url archive_file
 
@@ -102,6 +148,8 @@ main() {
     error "Try: cargo install forge-cli"
     exit 1
   fi
+
+  verify_checksum "$archive_file" "$version" "$platform"
 
   info "Installing to ${INSTALL_DIR}..."
   mkdir -p "$INSTALL_DIR"
