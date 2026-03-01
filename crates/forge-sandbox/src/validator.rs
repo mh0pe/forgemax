@@ -166,6 +166,31 @@ fn collapse_whitespace_before_parens(code: &str) -> String {
     re.replace_all(code, "$1(").into_owned()
 }
 
+/// Skip leading `//` line comments and `/* ... */` block comments, returning
+/// the remaining code. This allows files to have header comments before the
+/// required `async () => { ... }` arrow function.
+fn skip_leading_comments(s: &str) -> &str {
+    let mut rest = s;
+    loop {
+        rest = rest.trim_start();
+        if rest.starts_with("//") {
+            // Skip to end of line
+            match rest.find('\n') {
+                Some(pos) => rest = &rest[pos + 1..],
+                None => return "",
+            }
+        } else if rest.starts_with("/*") {
+            // Skip to closing */
+            match rest.find("*/") {
+                Some(pos) => rest = &rest[pos + 2..],
+                None => return rest, // unclosed comment — let parser report it
+            }
+        } else {
+            return rest;
+        }
+    }
+}
+
 /// Validates LLM-generated code before sandbox execution.
 pub fn validate_code(code: &str, max_size: Option<usize>) -> Result<(), SandboxError> {
     let max = max_size.unwrap_or(DEFAULT_MAX_CODE_SIZE);
@@ -185,9 +210,10 @@ pub fn validate_code(code: &str, max_size: Option<usize>) -> Result<(), SandboxE
         });
     }
 
-    // 3. Must be an async arrow function
+    // 3. Must be an async arrow function (skip leading // and /* */ comments)
     let trimmed = code.trim();
-    if !trimmed.starts_with("async") {
+    let code_start = skip_leading_comments(trimmed);
+    if !code_start.starts_with("async") {
         return Err(SandboxError::ValidationFailed {
             reason: "code must be an async arrow function, e.g. `async () => { ... }`. \
                      Do not provide bare statements — wrap your code in `async () => { ... }`"
@@ -366,6 +392,32 @@ mod tests {
     #[test]
     fn rejects_non_async_function() {
         let code = r#"() => { return 42; }"#;
+        let err = validate_code(code, None).unwrap_err();
+        assert!(matches!(err, SandboxError::ValidationFailed { .. }));
+    }
+
+    #[test]
+    fn accepts_leading_line_comments() {
+        let code = "// header comment\n// another comment\nasync () => { return 42; }";
+        assert!(validate_code(code, None).is_ok());
+    }
+
+    #[test]
+    fn accepts_leading_block_comments() {
+        let code = "/* block comment */\nasync () => { return 42; }";
+        assert!(validate_code(code, None).is_ok());
+    }
+
+    #[test]
+    fn accepts_mixed_leading_comments() {
+        let code =
+            "// @prompt test\n// @features none\n/* multi\nline */\nasync () => { return 1; }";
+        assert!(validate_code(code, None).is_ok());
+    }
+
+    #[test]
+    fn rejects_comments_without_async() {
+        let code = "// just a comment\nreturn 42;";
         let err = validate_code(code, None).unwrap_err();
         assert!(matches!(err, SandboxError::ValidationFailed { .. }));
     }
