@@ -136,12 +136,30 @@ cargo build --release
 ## Quick Start
 
 ```bash
-# Run (serves MCP over stdio)
+# 1. Generate a config file
+forgemax init
+
+# 2. Edit forge.toml to add your servers and tokens
+# 3. Validate your setup
+forgemax doctor
+
+# 4. Run (serves MCP over stdio)
 RUST_LOG=info forgemax
 
 # Run tests (development)
 cargo test --workspace
 ```
+
+### CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `forgemax` | Start the MCP gateway server (default) |
+| `forgemax serve` | Explicit alias for server mode |
+| `forgemax doctor` | Validate configuration and connectivity |
+| `forgemax manifest` | Inspect the capability manifest |
+| `forgemax run <file>` | Execute a JavaScript file against servers |
+| `forgemax init` | Generate a starter config file |
 
 ### Configuration
 
@@ -342,22 +360,27 @@ Process Isolation       Child process, clean env, kill-on-timeout (production mo
                         outcome, worker reuse, pool size, redacted code preview
 ```
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed security analysis and threat model.
+See [SECURITY.md](SECURITY.md) for the full threat model, defense-in-depth table, and hardening checklist. See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed design.
+
+## Examples
+
+The `examples/` directory contains runnable JavaScript files demonstrating all sandbox APIs:
+
+| File | Features |
+|------|----------|
+| `basic-tool-chaining.js` | `forge.callTool` chaining |
+| `multi-server-pipeline.js` | `forge.server()` fluent API |
+| `stash-workflow.js` | `forge.stash` put/get/keys |
+| `parallel-fan-out.js` | `forge.parallel()` concurrency |
+| `resource-reading.js` | `forge.readResource()` |
+| `error-handling.js` | Structured errors + fuzzy matching |
+| `parallel-stash-pipeline.js` | Hero: parallel + stash pipeline |
+
+Run an example: `forgemax run examples/basic-tool-chaining.js`
 
 ## Tests
 
-620 tests across the workspace:
-
-```
-forge-sandbox       395 unit + 28 integration (child process, security, AST, worker pool)
-forge-manifest       45 (builders, dynamic generation, sanitization, live refresh)
-forge-config         38 (parsing, validation, env expansion, groups, stash)
-forge-client         42 unit (router, timeout, circuit breaker, header sanitization) + 12 e2e
-forge-error          24 (typed errors, fuzzy matching, structured errors)
-forge-server         11 unit + 11 integration (resource, stash, parallel)
-forge-cli            12 unit (config parsing, stash config, wiring)
-forge-audit           1 (event types)
-```
+~700 tests across the workspace:
 
 ```bash
 cargo test --workspace

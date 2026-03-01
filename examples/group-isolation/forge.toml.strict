@@ -1,0 +1,42 @@
+# Group Isolation Example: Strict Mode
+#
+# Two strict groups prevent cross-group data flow within a single execute() call.
+# A tool call to "vault" locks the execution to the "internal" group;
+# subsequent calls to "slack" (in "external") will be rejected.
+
+[servers.vault]
+command = "vault-mcp"
+transport = "stdio"
+description = "Internal secrets management"
+timeout_secs = 15
+
+[servers.supabase]
+command = "npx"
+args = ["-y", "@supabase/mcp-server-supabase@latest", "--access-token", "test"]
+transport = "stdio"
+description = "Internal database"
+timeout_secs = 30
+
+[servers.slack]
+command = "slack-mcp"
+transport = "stdio"
+description = "External messaging"
+timeout_secs = 15
+
+[servers.linear]
+url = "https://mcp.linear.app/sse"
+transport = "sse"
+description = "External project tracking"
+timeout_secs = 15
+
+[groups.internal]
+servers = ["vault", "supabase"]
+isolation = "strict"
+
+[groups.external]
+servers = ["slack", "linear"]
+isolation = "strict"
+
+[sandbox]
+timeout_secs = 5
+execution_mode = "child_process"

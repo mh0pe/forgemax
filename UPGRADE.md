@@ -1,4 +1,52 @@
-# Upgrading to Forgemax v0.3.x
+# Upgrading Forgemax
+
+## v0.4.0 (Platform Release)
+
+### Feature Flag Migration
+
+In v0.3.x, `worker-pool`, `metrics`, and `config-watch` were opt-in features (default off). In v0.4.0, all three are **default-on**.
+
+**If you were already using `--features worker-pool,metrics`:** Remove the flag — features are now on by default. The redundant flag is harmless but unnecessary.
+
+**If you want a minimal build:** Use `--no-default-features` to disable all optional features:
+```bash
+cargo build --release --no-default-features
+```
+
+**If you want selective features:** Combine `--no-default-features` with `--features`:
+```bash
+cargo build --release --no-default-features --features ast-validator,worker-pool
+```
+
+### New CLI Subcommands
+
+`forgemax` now uses `clap` for argument parsing with subcommands:
+
+| Command | Description |
+|---------|-------------|
+| `forgemax` (no args) | Start the MCP gateway server (unchanged behavior) |
+| `forgemax serve` | Explicit alias for the default server mode |
+| `forgemax doctor` | Validate configuration and connectivity |
+| `forgemax manifest` | Inspect the capability manifest |
+| `forgemax run <file>` | Execute a JavaScript file against configured servers |
+| `forgemax init` | Generate a starter configuration file |
+
+**Backward compatibility:** Running `forgemax` with no arguments still starts the server, exactly as in v0.3.x.
+
+### Configuration Compatibility
+
+v0.3.x configuration files work without modification. New optional sections (`[sandbox.pool]`, `[manifest]`, `[groups.*]`) default to safe values when absent.
+
+A production configuration example is available at `forge.toml.example.production`.
+
+### New Documentation
+
+- `SECURITY.md` — Comprehensive security model documentation
+- `CONTRIBUTING.md` — Developer setup and contribution guidelines
+- `ROADMAP.md` — Project roadmap and non-goals
+- `examples/` — JavaScript examples demonstrating all sandbox APIs
+
+---
 
 ## v0.3.1 (Production Hardening)
 

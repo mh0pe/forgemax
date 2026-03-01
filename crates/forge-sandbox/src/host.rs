@@ -378,7 +378,7 @@ where
 ///
 /// On Unix, rejects world-writable binaries (mode & 0o002 != 0).
 #[tracing::instrument]
-pub(crate) fn find_worker_binary() -> Result<PathBuf, SandboxError> {
+pub fn find_worker_binary() -> Result<PathBuf, SandboxError> {
     // 1. Explicit env var — must be an absolute path
     if let Ok(path) = std::env::var("FORGE_WORKER_BIN") {
         let p = PathBuf::from(&path);

@@ -134,26 +134,23 @@ mod feature_tests {
         assert!(result.is_ok());
     }
 
-    /// Verify that `worker-pool` feature is off by default.
-    /// This test always runs — the assertion uses a runtime check.
+    /// Verify that `worker-pool` feature is on by default (v0.4.0+).
     #[test]
-    fn ff_02_worker_pool_not_default() {
-        // worker-pool gates pre_warm/start_reap_task. When off, those methods don't exist.
-        // We verify this indirectly: if someone accidentally makes it default,
-        // the #[cfg(not(feature = "worker-pool"))] block below would fail to compile.
-        #[cfg(not(feature = "worker-pool"))]
-        {
-            // Expected: worker-pool is off by default
-        }
+    #[cfg(feature = "worker-pool")]
+    fn ff_02_worker_pool_is_default() {
+        // worker-pool is default-on since v0.4.0.
+        // Verify the pool module types are accessible.
+        let _ = std::any::type_name::<crate::pool::WorkerPool>();
+        let _ = std::any::type_name::<crate::pool::PoolConfig>();
     }
 
-    /// Verify that `metrics` feature is off by default.
+    /// Verify that `metrics` feature is on by default (v0.4.0+).
     #[test]
-    fn ff_03_metrics_not_default() {
-        #[cfg(not(feature = "metrics"))]
-        {
-            // Expected: metrics is off by default
-        }
+    #[cfg(feature = "metrics")]
+    fn ff_03_metrics_is_default() {
+        // metrics is default-on since v0.4.0.
+        // Verify the metrics module types are accessible.
+        let _ = std::any::type_name::<crate::metrics::ForgeMetrics>();
     }
 
     /// Verify that the crate has the expected module layout regardless of features.
@@ -163,5 +160,21 @@ mod feature_tests {
         let _ = std::any::type_name::<crate::SandboxError>();
         let _ = std::any::type_name::<crate::SandboxConfig>();
         let _ = std::any::type_name::<crate::ExecutionMode>();
+    }
+
+    /// Verify that minimal feature set disables worker-pool.
+    /// Only compiles under `--no-default-features`.
+    #[test]
+    #[cfg(not(feature = "worker-pool"))]
+    fn ff_05_minimal_disables_pool() {
+        // Under --no-default-features, worker-pool should be off.
+    }
+
+    /// Verify that minimal feature set disables metrics.
+    /// Only compiles under `--no-default-features`.
+    #[test]
+    #[cfg(not(feature = "metrics"))]
+    fn ff_06_minimal_disables_metrics() {
+        // Under --no-default-features, metrics should be off.
     }
 }

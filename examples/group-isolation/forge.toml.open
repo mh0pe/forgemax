@@ -1,0 +1,33 @@
+# Group Isolation Example: Open Mode
+#
+# All servers in one open group — no data-flow restrictions.
+# Any tool can call any other tool within a single execute() call.
+
+[servers.narsil]
+command = "narsil-mcp"
+args = ["--repos", "."]
+transport = "stdio"
+description = "Code intelligence"
+timeout_secs = 30
+
+[servers.github]
+command = "docker"
+args = ["run", "-i", "--rm", "-e", "GITHUB_PERSONAL_ACCESS_TOKEN", "ghcr.io/github/github-mcp-server"]
+transport = "stdio"
+description = "GitHub API"
+timeout_secs = 30
+
+[servers.playwright]
+command = "npx"
+args = ["@playwright/mcp@latest", "--headless"]
+transport = "stdio"
+description = "Browser automation"
+timeout_secs = 60
+
+[groups.all]
+servers = ["narsil", "github", "playwright"]
+isolation = "open"
+
+[sandbox]
+timeout_secs = 5
+execution_mode = "child_process"

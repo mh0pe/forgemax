@@ -1133,6 +1133,131 @@ mod tests {
         assert_eq!(pool.max_uses, Some(50));
     }
 
+    // --- Production config parse tests (CFG-P01..CFG-P06) ---
+
+    fn load_production_example() -> ForgeConfig {
+        let toml_str = include_str!("../../../forge.toml.example.production");
+        ForgeConfig::from_toml(toml_str).expect("production example must parse")
+    }
+
+    #[test]
+    fn cfg_p01_production_example_parses() {
+        let config = load_production_example();
+        assert!(!config.servers.is_empty(), "should have servers");
+    }
+
+    #[test]
+    fn cfg_p02_production_pool_enabled() {
+        let config = load_production_example();
+        let pool = config.sandbox.pool.as_ref().expect("pool section required");
+        assert_eq!(pool.enabled, Some(true));
+        assert!(pool.min_workers.is_some());
+        assert!(pool.max_workers.is_some());
+    }
+
+    #[test]
+    fn cfg_p03_production_strict_groups() {
+        let config = load_production_example();
+        assert!(!config.groups.is_empty(), "should have groups");
+        let has_strict = config.groups.values().any(|g| g.isolation == "strict");
+        assert!(has_strict, "should have at least one strict group");
+    }
+
+    #[test]
+    fn cfg_p04_production_stash_configured() {
+        let config = load_production_example();
+        let stash = config
+            .sandbox
+            .stash
+            .as_ref()
+            .expect("stash section required");
+        assert!(stash.max_keys.is_some());
+        assert!(stash.max_total_size_mb.is_some());
+    }
+
+    #[test]
+    fn cfg_p05_production_circuit_breakers() {
+        let config = load_production_example();
+        for (name, server) in &config.servers {
+            assert_eq!(
+                server.circuit_breaker,
+                Some(true),
+                "server '{}' should have circuit_breaker = true",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn cfg_p06_production_execution_mode_child_process() {
+        let config = load_production_example();
+        assert_eq!(
+            config.sandbox.execution_mode.as_deref(),
+            Some("child_process")
+        );
+    }
+
+    /// Verify that `config-watch` feature is on by default (v0.4.0+).
+    #[test]
+    #[cfg(feature = "config-watch")]
+    fn ff_d03_config_watch_is_default() {
+        // config-watch is default-on since v0.4.0.
+        // Verify the watcher module type is accessible.
+        let _ = std::any::type_name::<crate::watcher::ConfigWatcher>();
+    }
+
+    // --- Upgrade path compatibility tests (UP-01..UP-03) ---
+
+    #[test]
+    fn up_01_v03x_config_without_pool_section() {
+        // v0.3.x configs may not have [sandbox.pool] at all
+        let toml = r#"
+            [servers.test]
+            command = "test-mcp"
+            transport = "stdio"
+
+            [sandbox]
+            timeout_secs = 5
+        "#;
+        let config = ForgeConfig::from_toml(toml).unwrap();
+        assert!(config.sandbox.pool.is_none());
+    }
+
+    #[test]
+    fn up_02_v03x_config_without_manifest_section() {
+        // v0.3.x configs may not have [manifest] at all
+        let toml = r#"
+            [servers.test]
+            command = "test-mcp"
+            transport = "stdio"
+        "#;
+        let config = ForgeConfig::from_toml(toml).unwrap();
+        assert!(config.manifest.refresh_interval_secs.is_none());
+    }
+
+    #[test]
+    fn up_03_v03x_config_without_groups_or_stash() {
+        // v0.3.x minimal config: just servers and sandbox basics
+        let toml = r#"
+            [servers.narsil]
+            command = "narsil-mcp"
+            args = ["--repos", "."]
+            transport = "stdio"
+
+            [sandbox]
+            timeout_secs = 5
+            max_heap_mb = 64
+            max_concurrent = 8
+            max_tool_calls = 50
+            execution_mode = "child_process"
+        "#;
+        let config = ForgeConfig::from_toml(toml).unwrap();
+        assert!(config.groups.is_empty());
+        assert!(config.sandbox.stash.is_none());
+        assert!(config.sandbox.pool.is_none());
+        assert_eq!(config.servers.len(), 1);
+    }
+
     /// Compile-time guard: ConfigError is #[non_exhaustive].
     #[test]
     #[allow(unreachable_patterns)]

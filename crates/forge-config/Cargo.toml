@@ -19,7 +19,8 @@ notify = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 
 [features]
-default = []
+default = ["config-watch"]
+minimal = []
 config-watch = ["dep:notify", "dep:tokio"]
 
 [dev-dependencies]

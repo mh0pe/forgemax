@@ -34,7 +34,8 @@ oxc_span = { workspace = true, optional = true }
 oxc_allocator = { workspace = true, optional = true }
 
 [features]
-default = ["ast-validator"]
+default = ["ast-validator", "worker-pool", "metrics"]
+minimal = []
 ast-validator = ["dep:oxc_parser", "dep:oxc_ast", "dep:oxc_span", "dep:oxc_allocator"]
 worker-pool = []
 metrics = ["dep:prometheus-client"]
@@ -43,3 +44,4 @@ metrics = ["dep:prometheus-client"]
 tempfile = "3"
 serial_test = "3"
 temp-env = "0.3"
+forge-config.workspace = true
