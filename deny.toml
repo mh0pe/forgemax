@@ -7,8 +7,9 @@
 all-features = true
 
 [advisories]
-vulnerability = "deny"
-unmaintained = "warn"
+# All vulnerability advisories are errors by default in cargo-deny v2.
+# Only flag unmaintained crates that are direct workspace dependencies.
+unmaintained = "workspace"
 
 [licenses]
 unlicensed = "deny"
