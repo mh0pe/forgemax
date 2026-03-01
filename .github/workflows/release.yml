@@ -155,7 +155,8 @@ jobs:
       - name: Generate SBOM
         run: |
           cargo install cargo-cyclonedx --locked
-          cargo cyclonedx --format json --output-file release/forgemax-sbom.json
+          cargo cyclonedx --format json --override-filename forgemax-sbom --all
+          mv forgemax-sbom.cdx.json release/forgemax-sbom.json
 
       - name: Generate checksums
         run: |
