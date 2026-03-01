@@ -12,7 +12,8 @@ all-features = true
 unmaintained = "workspace"
 
 [licenses]
-unlicensed = "deny"
+# In cargo-deny v2, all licenses are denied unless explicitly allowed.
+# No separate unlicensed/copyleft fields — the allow list is the sole control.
 allow = [
     "MIT",
     "Apache-2.0",
@@ -27,7 +28,6 @@ allow = [
     "CC0-1.0",
     "MPL-2.0",
 ]
-copyleft = "deny"
 # Workspace crates use FSL-1.1-ALv2 (Functional Source License),
 # which is not a standard SPDX identifier. Allow it explicitly.
 exceptions = [
