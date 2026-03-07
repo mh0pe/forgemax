@@ -1,4 +1,5 @@
 name: Copilot Setup Steps
+<<<<<<< HEAD
 on:
   push:
     paths:
@@ -6,43 +7,77 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  name: Copilot Setup Steps
+  on:
+    push:
+      paths:
+        - .github/workflows/copilot-setup-steps.yml
+    workflow_dispatch:
 
-=======
-  copilot-setup-steps:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-      - name: Install gh-aw extension
-        uses: github/gh-aw/actions/setup-cli@v0.51.0
-        with:
-          version: v0.51.0
+  permissions:
+    contents: read
 
-      # ASH is installed here so the `ash mcp` stdio server is available
-      # to the Copilot coding agent. The repo admin must also add the MCP
-      # JSON configuration in Settings > Copilot > Coding agent:
-      #
-      #   {
-      #     "mcpServers": {
-      #       "ash": {
-      #         "type": "local",
-      #         "command": "ash",
-      #         "args": ["mcp"],
-      #         "tools": [
-      #           "scan_directory",
-      #           "get_scan_progress",
-      #           "get_scan_results",
-      #           "list_active_scans",
-      #           "cancel_scan",
-      #           "check_installation"
-      #         ]
-      #       }
-      #     }
-      #   }
-      - name: Install ASH v3.2.2
-        run: pipx install git+https://github.com/awslabs/automated-security-helper.git@v3.2.2
-      #           "check_installation"
->>>>>>> 87dce7b (Add copilot-setup-steps.yml for ASH MCP server integration)
+    - name: Install gh-aw extension
+    copilot-setup-steps:
+      runs-on: ubuntu-latest
+      permissions:
+        contents: read
+      steps:
+        - name: Checkout repository
+          uses: actions/checkout@v4
+        - name: Install gh-aw extension
+          uses: github/gh-aw/actions/setup-cli@v0.51.0
+          with:
+            version: v0.51.0
+
+        # ASH is installed here so the `ash mcp` stdio server is available
+        # to the Copilot coding agent. The repo admin must also add the MCP
+        # JSON configuration in Settings > Copilot > Coding agent:
+        #
+        #   {
+        #     "mcpServers": {
+        #       "ash": {
+        #         "type": "local",
+        #         "command": "ash",
+        #         "args": ["mcp"],
+        #         "tools": [
+        #           "scan_directory",
+        #           "get_scan_progress",
+        #           "get_scan_results",
+        #           "list_active_scans",
+        #           "cancel_scan",
+        #           "check_installation"
+        #         ]
+        #       }
+        #     }
+        #   }
+        - name: Install ASH v3.2.2
+          run: pipx install git+https://github.com/awslabs/automated-security-helper.git@v3.2.2
+      uses: github/gh-aw/actions/setup-cli@v0.51.0
+      with:
+        version: v0.51.0
+    # ASH is installed here so the `ash mcp` stdio server is available
+    # to the Copilot coding agent. The repo admin must also add the MCP
+    # JSON configuration in Settings > Copilot > Coding agent:
+    #
+    #   {
+    #     "mcpServers": {
+    #       "ash": {
+    #         "type": "local",
+    #         "command": "ash",
+    #         "args": ["mcp"],
+    #         "tools": [
+    #           "scan_directory",
+    #           "get_scan_progress",
+    #           "get_scan_results",
+    #           "list_active_scans",
+    #           "cancel_scan",
+    #           "check_installation"
+    #         ]
+    #       }
+    #     }
+    #   }
+    - name: Install ASH v3.2.2
+      run: pipx install git+https://github.com/awslabs/automated-security-helper.git@v3.2.2
+>>>>>>> 0bc9223 (Resolve merge conflict: combine main's gh-aw setup with ASH install in copilot-setup-steps.yml)
+>>>>>>> 89cf140 (Resolve merge conflict: combine main's gh-aw setup with ASH install in copilot-setup-steps.yml)
