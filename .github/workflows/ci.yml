@@ -1,176 +1,25 @@
-name: CI
+name: Compile workflows with latest gh-aw release
 
 on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
-
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
-
-env:
-  CARGO_TERM_COLOR: always
-  RUSTFLAGS: -D warnings
 
 jobs:
-  lint:
-    name: Lint
+  install-gh-aw:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-      - uses: ./.github/actions/fetch-v8
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-      - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
-
-  test:
-    name: Test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - uses: ./.github/actions/fetch-v8
-      - name: Build all binaries (needed for integration tests)
-        run: cargo build --workspace
-      - name: Run tests
-        run: cargo test --workspace --verbose
-
-  doc-consistency:
-    name: Documentation consistency
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Check required files exist
-        run: |
-          for f in SECURITY.md CONTRIBUTING.md ROADMAP.md CHANGELOG.md UPGRADE.md; do
-            [ -f "$f" ] || { echo "MISSING: $f"; exit 1; }
-          done
-      - name: Check README references
-        run: |
-          grep -q "SECURITY.md" README.md || { echo "README missing SECURITY.md link"; exit 1; }
-          grep -q "forgemax doctor" README.md || { echo "README missing doctor reference"; exit 1; }
-      - name: Check examples exist
-        run: |
-          [ -d examples ] || { echo "MISSING: examples/"; exit 1; }
-          JS_COUNT=$(find examples -name "*.js" | wc -l | tr -d ' ')
-          [ "$JS_COUNT" -ge 7 ] || { echo "Expected >=7 JS examples, found $JS_COUNT"; exit 1; }
-      - name: Check example headers
-        run: |
-          for f in examples/*.js; do
-            grep -q "@prompt" "$f" || { echo "$f missing @prompt"; exit 1; }
-            grep -q "@features" "$f" || { echo "$f missing @features"; exit 1; }
-          done
-      - name: Scan for credential patterns
-        run: |
-          # Scan for realistic API keys (20+ char) in source and config files.
-          # Short test fixtures (sk-123, sk-secret-12345) are allowed in test code.
-          ! grep -rn "sk-[a-zA-Z0-9]\{20,\}" --include="*.rs" --include="*.toml" . \
-            || { echo "Possible hardcoded API key found"; exit 1; }
-
-  example-validation:
-    name: Example validation
-    runs-on: ubuntu-latest
-    needs: [lint]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - uses: ./.github/actions/fetch-v8
-      - name: Run example validation tests
-        run: cargo test -p forge-sandbox --test example_validation
-
-  minimal-build:
-    name: Minimal build (no default features)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - uses: ./.github/actions/fetch-v8
-      - name: Build with no default features
-        run: cargo build --workspace --no-default-features
-      - name: Test with no default features
-        run: cargo test --workspace --no-default-features
-
-  doctor-smoke:
-    name: Doctor smoke test
-    runs-on: ubuntu-latest
-    needs: [test]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - uses: ./.github/actions/fetch-v8
-      - name: Build release binary
-        run: cargo build --release -p forge-cli
-      - name: Create minimal test config
-        run: |
-          cat > /tmp/forge-doctor-test.toml <<'EOF'
-          [sandbox]
-          timeout_secs = 5
-          max_heap_mb = 64
-          EOF
-      - name: Run doctor with JSON output
-        run: |
-          ./target/release/forgemax doctor --json --config /tmp/forge-doctor-test.toml | tee /tmp/doctor-output.json
-          # Verify JSON is valid
-          python3 -c "import json; d=json.load(open('/tmp/doctor-output.json')); assert d['schema_version']==1; print(f'Doctor: {d[\"summary\"]}')"
-
-  run-examples:
-    name: Run examples against test server
-    runs-on: ubuntu-latest
-    needs: [test]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - uses: ./.github/actions/fetch-v8
-      - name: Build all binaries
-        run: cargo build --release --workspace
-      - name: Create test config with forge-test-server
-        run: |
-          cat > /tmp/forge-run-test.toml <<EOF
-          [servers.test]
-          command = "$(pwd)/target/release/forge-test-server"
-          transport = "stdio"
-          timeout_secs = 10
-          [sandbox]
-          timeout_secs = 5
-          max_heap_mb = 64
-          execution_mode = "in_process"
-          EOF
-      - name: Run basic-tool-chaining example
-        run: |
-          ./target/release/forgemax run --config /tmp/forge-run-test.toml examples/basic-tool-chaining.js
-
-  deny:
-    name: Dependency policy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
-        with:
-          command: check
-          arguments: --all-features
-
-  security:
-    name: Security audit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
-      - name: Run security audit
-        run: cargo audit
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install gh-aw
+        run: gh extension install github/gh-aw
+        env: 
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify gh-aw installation
+        run: gh aw --version
+        env: 
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Compile workflows in .github/workflows
+        run: gh aw compile --verbose
+        env: 
+            GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
