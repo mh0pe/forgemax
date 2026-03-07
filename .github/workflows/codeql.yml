@@ -69,6 +69,18 @@ jobs:
     # - name: Setup runtime (example)
     #   uses: actions/setup-example@v1
 
+    # Rust toolchain setup, cache, and V8 prebuilt download for Rust analysis.
+    - name: Setup Rust toolchain
+      if: matrix.language == 'rust'
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Setup Rust cache
+      if: matrix.language == 'rust'
+      uses: Swatinem/rust-cache@v2
+
+    - name: Fetch V8 prebuilt
+      if: matrix.language == 'rust'
+      uses: ./.github/actions/fetch-v8
     # Initializes the CodeQL tools for scanning.
     - name: Initialize CodeQL
       uses: github/codeql-action/init@v4
