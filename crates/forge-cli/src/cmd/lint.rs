@@ -261,7 +261,8 @@ pub fn check_groups(config_path: Option<&PathBuf>) -> Check {
         .flat_map(|g| g.servers.iter().map(|s| s.as_str()))
         .collect();
 
-    let orphaned: Vec<&str> = server_names.difference(&grouped_servers).copied().collect();
+    let mut orphaned: Vec<&str> = server_names.difference(&grouped_servers).copied().collect();
+    orphaned.sort();
 
     if orphaned.is_empty() {
         Check {

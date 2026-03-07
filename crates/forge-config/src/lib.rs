@@ -106,6 +106,8 @@ pub struct ForgeConfig {
 
     /// Config file includes. Processed in order; servers and groups from
     /// includes are merged (main config wins on key conflicts).
+    /// After processing, this field retains only the main config's entries
+    /// (nested includes from included files are not followed).
     #[serde(default)]
     pub include: Vec<IncludeEntry>,
 
@@ -370,7 +372,9 @@ impl ForgeConfig {
             self.merge_from(included);
         }
 
-        // Restore the include entries (for informational purposes)
+        // Preserve the main config's include entries so callers can inspect
+        // which files were included. Note: this only contains entries from the
+        // main config — nested includes (from included files) are not followed.
         self.include = entries;
         Ok(())
     }
@@ -720,7 +724,7 @@ fn load_include_content(
         let url = if path_str.starts_with("github://") {
             resolve_github_uri(path_str)?
         } else {
-            path_str.clone()
+            path_str.to_string()
         };
 
         let content = fetch_remote(&url)?;
