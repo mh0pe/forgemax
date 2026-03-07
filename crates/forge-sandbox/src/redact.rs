@@ -276,7 +276,7 @@ mod tests {
 
     #[test]
     fn preserves_not_found_messages() {
-        let msg = "symbol 'handleRequet' not found, did you mean 'handleRequest'?"; // typos: ignore
+        let msg = "symbol 'handleRequet' not found, did you mean 'handleRequest'?";
         let result = redact_error_message(msg);
         assert_eq!(result, msg, "not-found messages should be preserved");
     }
@@ -447,7 +447,7 @@ mod tests {
             "retryable": false,
             "suggested_fix": "config at /home/user/.config/forge/tools.toml, try 'find_symbols'"
         });
-        redact_structured_error("narsil", "fnd_symbols", &mut err); // typos: ignore
+        redact_structured_error("narsil", "fnd_symbols", &mut err);
         let fix = err["suggested_fix"].as_str().unwrap();
         assert!(
             !fix.contains("/home/user"),

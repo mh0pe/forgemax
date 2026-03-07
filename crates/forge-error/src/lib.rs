@@ -366,7 +366,7 @@ mod tests {
     fn structured_error_tool_not_found_with_suggestion() {
         let err = DispatchError::ToolNotFound {
             server: "narsil".into(),
-            tool: "fnd_symbols".into(), // typos: ignore
+            tool: "fnd_symbols".into(),
         };
         let tools = vec![
             ("narsil", "find_symbols"),
@@ -435,10 +435,10 @@ mod tests {
 
     #[test]
     fn fuzzy_match_close_tool_name() {
-        // "fnd" is edit distance 1 from "find" // typos: ignore
+        // "fnd" is edit distance 1 from "find"
         let result = super::find_similar_tool(
             "narsil",
-            "fnd_symbols", // typos: ignore
+            "fnd_symbols",
             &[("narsil", "find_symbols"), ("narsil", "parse")],
         );
         assert!(result.is_some());

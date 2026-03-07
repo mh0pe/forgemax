@@ -1,0 +1,4 @@
+[default.extend-words]
+# Intentional misspellings used in test fixtures for fuzzy-match and error-message formatting
+fnd = "fnd"
+Requet = "Requet"

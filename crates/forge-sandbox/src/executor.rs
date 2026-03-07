@@ -3683,7 +3683,7 @@ mod tests {
         let known_tools = vec![("narsil".to_string(), "find_symbols".to_string())];
 
         let code = r#"async () => {
-            const result = await forge.callTool("narsil", "fnd_symbols", {}); // typos: ignore
+            const result = await forge.callTool("narsil", "fnd_symbols", {});
             return result;
         }"#;
 

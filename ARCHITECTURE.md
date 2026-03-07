@@ -95,7 +95,7 @@ Timeouts trip the circuit breaker (a timeout is a failure), so a persistently sl
 
 Security best practice says: **never expose internal error details to untrusted consumers** — stack traces, file paths, database schemas, and connection strings are all information that aids attackers.
 
-But Forgemax's consumer is an LLM that needs to **self-correct**. A redacted error like `"tool call failed"` gives the LLM nothing to work with. A verbose error like `"narsil: symbol 'handleRequet' not found, did you mean 'handleRequest'?"` lets it fix the typo and retry. <!-- typos: ignore -->
+But Forgemax's consumer is an LLM that needs to **self-correct**. A redacted error like `"tool call failed"` gives the LLM nothing to work with. A verbose error like `"narsil: symbol 'handleRequet' not found, did you mean 'handleRequest'?"` lets it fix the typo and retry.
 
 ### Design Decision: Layered Redaction
 
