@@ -719,6 +719,9 @@ fn compute_sha512(content: &str) -> String {
 }
 
 /// Maximum response body size for remote includes (1 MB).
+///
+/// Config files are TOML text and should never be this large. This limit
+/// prevents accidental or malicious large downloads during config loading.
 const MAX_REMOTE_INCLUDE_BYTES: u64 = 1_048_576;
 
 /// Fetch content from a remote URL with timeouts and size limits.

@@ -192,8 +192,8 @@ fn resolve_include_content(
 ) -> Option<String> {
     let path_str = &entry.path;
 
-    // Only scan local includes (not remote)
-    if forge_config::is_remote_include(path_str) || path_str.starts_with("http://") {
+    // Skip remote includes — only scan local files
+    if forge_config::is_remote_include(path_str) {
         return None;
     }
 
