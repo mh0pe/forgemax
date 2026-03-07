@@ -415,6 +415,14 @@ cargo test --workspace
 | notify | 7.x | Config file watching (optional) |
 | prometheus-client | 0.22 | Metrics export (optional) |
 
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=mh0pe/forgemax&type=Date)](https://star-history.com/#mh0pe/forgemax&Date)
+
+## Contributors
+
+[![Contributors](https://contrib.rocks/image?repo=mh0pe/forgemax)](https://github.com/mh0pe/forgemax/graphs/contributors)
+
 ## License
 
 [FSL-1.1-ALv2](LICENSE) — Functional Source License, Version 1.1, with Apache License 2.0 future grant.
