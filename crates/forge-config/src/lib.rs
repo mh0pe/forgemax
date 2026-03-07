@@ -359,7 +359,7 @@ impl ForgeConfig {
 
         // CV-08: startup_concurrency must be >= 1
         if let Some(concurrency) = self.sandbox.startup_concurrency {
-            if concurrency < 1 {
+            if concurrency == 0 {
                 return Err(ConfigError::Invalid(
                     "sandbox.startup_concurrency must be >= 1".into(),
                 ));

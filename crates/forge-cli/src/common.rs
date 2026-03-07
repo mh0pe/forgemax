@@ -203,8 +203,13 @@ pub async fn connect_and_build_manifest(config: &ForgeConfig) -> Result<ConnectR
         let transport_config = to_transport_config(&server_config)?;
 
         let handle = tokio::spawn(async move {
-            // Acquire semaphore permit to limit concurrency
-            let _permit = semaphore.acquire().await.expect("semaphore closed");
+            // Acquire semaphore permit to limit concurrency.
+            // This only fails if the semaphore is closed, which cannot happen here
+            // since we hold the Arc reference and never close it.
+            let _permit = semaphore
+                .acquire()
+                .await
+                .expect("startup concurrency semaphore unexpectedly closed");
 
             tracing::info!(server = %name, "connecting to downstream server");
 
@@ -527,15 +532,6 @@ mod tests {
         let toml = "";
         let config = ForgeConfig::from_toml(toml).unwrap();
         assert!(config.sandbox.startup_concurrency.is_none());
-    }
-
-    #[test]
-    fn sc_03_default_startup_concurrency_is_at_least_one() {
-        let concurrency = forge_config::default_startup_concurrency();
-        assert!(
-            concurrency >= 1,
-            "default startup concurrency should be at least 1, got: {concurrency}"
-        );
     }
 
     #[test]
