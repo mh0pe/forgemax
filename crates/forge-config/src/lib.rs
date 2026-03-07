@@ -50,6 +50,7 @@
 pub mod watcher;
 
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -316,10 +317,13 @@ impl ForgeConfig {
     }
 
     /// Load config from a file path. Processes `[[include]]` entries.
+    /// Environment variables are **not** expanded (use [`from_file_with_env`]
+    /// if expansion is needed).
     pub fn from_file(path: &Path) -> Result<Self, ConfigError> {
         let content = std::fs::read_to_string(path)?;
         let mut config: ForgeConfig = toml::from_str(&content)?;
-        config.process_includes(path)?;
+        config.validate_security_mode()?;
+        config.process_includes(path, false)?;
         config.validate()?;
         Ok(config)
     }
@@ -338,7 +342,8 @@ impl ForgeConfig {
         let content = std::fs::read_to_string(path)?;
         let expanded = expand_env_vars(&content);
         let mut config: ForgeConfig = toml::from_str(&expanded)?;
-        config.process_includes(path)?;
+        config.validate_security_mode()?;
+        config.process_includes(path, true)?;
         config.validate()?;
         Ok(config)
     }
@@ -353,9 +358,25 @@ impl ForgeConfig {
         }
     }
 
+    /// Validate security_mode before processing includes.
+    fn validate_security_mode(&self) -> Result<(), ConfigError> {
+        match self.security_mode.as_str() {
+            "auto-pin" | "strict" => Ok(()),
+            other => Err(ConfigError::Invalid(format!(
+                "unsupported security_mode '{}', supported: auto-pin, strict",
+                other
+            ))),
+        }
+    }
+
     /// Process `[[include]]` entries, loading and merging included configs.
     /// Nested includes (includes within included files) are not followed.
-    fn process_includes(&mut self, config_path: &Path) -> Result<(), ConfigError> {
+    /// If `expand_env` is true, environment variables in included content are expanded.
+    fn process_includes(
+        &mut self,
+        config_path: &Path,
+        expand_env: bool,
+    ) -> Result<(), ConfigError> {
         if self.include.is_empty() {
             return Ok(());
         }
@@ -365,8 +386,12 @@ impl ForgeConfig {
 
         for entry in &entries {
             let content = load_include_content(entry, base_dir, &self.security_mode)?;
-            let expanded = expand_env_vars(&content);
-            let included: ForgeConfig = toml::from_str(&expanded).map_err(|e| {
+            let parsed_content = if expand_env {
+                expand_env_vars(&content)
+            } else {
+                content
+            };
+            let included: ForgeConfig = toml::from_str(&parsed_content).map_err(|e| {
                 ConfigError::Include(format!("failed to parse include '{}': {}", entry.path, e))
             })?;
             self.merge_from(included);
@@ -642,10 +667,11 @@ fn expand_env_vars(input: &str) -> String {
 }
 
 /// Check whether an include path refers to a remote resource.
-fn is_remote_include(path: &str) -> bool {
-    path.starts_with("https://")
-        || path.starts_with("http://")
-        || path.starts_with("github://")
+///
+/// Only `https://` and `github://` are supported. Plain `http://` is
+/// rejected because it is vulnerable to MITM tampering.
+pub fn is_remote_include(path: &str) -> bool {
+    path.starts_with("https://") || path.starts_with("github://")
 }
 
 /// Resolve a `github://` URI to an HTTPS URL for raw content.
@@ -692,14 +718,40 @@ fn compute_sha512(content: &str) -> String {
         .collect::<String>()
 }
 
-/// Fetch content from a remote URL.
+/// Maximum response body size for remote includes (1 MB).
+const MAX_REMOTE_INCLUDE_BYTES: u64 = 1_048_576;
+
+/// Fetch content from a remote URL with timeouts and size limits.
 fn fetch_remote(url: &str) -> Result<String, ConfigError> {
-    let response = ureq::get(url).call().map_err(|e| {
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(std::time::Duration::from_secs(10))
+        .timeout_read(std::time::Duration::from_secs(30))
+        .build();
+
+    let response = agent.get(url).call().map_err(|e| {
         ConfigError::Include(format!("failed to fetch '{}': {}", url, e))
     })?;
-    let body = response.into_string().map_err(|e| {
-        ConfigError::Include(format!("failed to read response from '{}': {}", url, e))
-    })?;
+
+    let content_len = response
+        .header("Content-Length")
+        .and_then(|v| v.parse::<u64>().ok());
+    if let Some(len) = content_len {
+        if len > MAX_REMOTE_INCLUDE_BYTES {
+            return Err(ConfigError::Include(format!(
+                "remote include '{}' is too large ({} bytes, max {} bytes)",
+                url, len, MAX_REMOTE_INCLUDE_BYTES
+            )));
+        }
+    }
+
+    let mut body = String::new();
+    response
+        .into_reader()
+        .take(MAX_REMOTE_INCLUDE_BYTES)
+        .read_to_string(&mut body)
+        .map_err(|e| {
+            ConfigError::Include(format!("failed to read response from '{}': {}", url, e))
+        })?;
     Ok(body)
 }
 
@@ -717,6 +769,14 @@ fn load_include_content(
         return std::fs::read_to_string(&p).map_err(|e| {
             ConfigError::Include(format!("failed to read '{}': {}", p.display(), e))
         });
+    }
+
+    // Reject plaintext HTTP — vulnerable to MITM
+    if path_str.starts_with("http://") {
+        return Err(ConfigError::Include(format!(
+            "plaintext http:// includes are not supported (use https://): {}",
+            path_str
+        )));
     }
 
     // Remote includes: https:// or github://
@@ -1931,7 +1991,7 @@ path = "./env-include.toml"
     #[test]
     fn is_remote_include_identifies_remotes() {
         assert!(is_remote_include("https://example.com/config.toml"));
-        assert!(is_remote_include("http://example.com/config.toml"));
+        assert!(!is_remote_include("http://example.com/config.toml"));
         assert!(is_remote_include("github://org/repo/file.toml"));
         assert!(!is_remote_include("./local.toml"));
         assert!(!is_remote_include("/absolute/path.toml"));
@@ -2075,6 +2135,129 @@ path = "./child.toml"
         assert!(
             !config.servers.contains_key("grandchild_server"),
             "nested includes should not be followed"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn config_rejects_http_include() {
+        let toml = r#"
+[[include]]
+path = "http://example.com/evil.toml"
+"#;
+        let dir = std::env::temp_dir().join("forge-config-test-http-reject");
+        std::fs::create_dir_all(&dir).unwrap();
+        let main_path = dir.join("forge.toml");
+        std::fs::write(&main_path, toml).unwrap();
+
+        let err = ForgeConfig::from_file(&main_path).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("http://") && msg.contains("not supported"),
+            "should reject http:// include: {msg}"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn config_from_file_does_not_expand_env_in_includes() {
+        let dir = std::env::temp_dir().join("forge-config-test-no-expand");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let included_path = dir.join("inc.toml");
+        std::fs::write(
+            &included_path,
+            r#"
+[servers.inc_server]
+url = "https://example.com/${FORGE_NO_EXPAND_TEST_VAR}"
+transport = "sse"
+"#,
+        )
+        .unwrap();
+
+        let main_path = dir.join("forge.toml");
+        std::fs::write(
+            &main_path,
+            r#"
+[[include]]
+path = "./inc.toml"
+"#,
+        )
+        .unwrap();
+
+        // from_file should NOT expand env vars in includes
+        let config = ForgeConfig::from_file(&main_path).unwrap();
+        assert_eq!(
+            config.servers["inc_server"].url.as_deref(),
+            Some("https://example.com/${FORGE_NO_EXPAND_TEST_VAR}"),
+            "from_file should not expand env vars in includes"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn config_from_file_with_env_expands_env_in_includes() {
+        let dir = std::env::temp_dir().join("forge-config-test-expand");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let included_path = dir.join("inc.toml");
+        std::fs::write(
+            &included_path,
+            r#"
+[servers.inc_server]
+url = "https://example.com/${FORGE_EXPAND_TEST_VAR}"
+transport = "sse"
+"#,
+        )
+        .unwrap();
+
+        let main_path = dir.join("forge.toml");
+        std::fs::write(
+            &main_path,
+            r#"
+[[include]]
+path = "./inc.toml"
+"#,
+        )
+        .unwrap();
+
+        temp_env::with_var("FORGE_EXPAND_TEST_VAR", Some("expanded_val"), || {
+            let config = ForgeConfig::from_file_with_env(&main_path).unwrap();
+            assert_eq!(
+                config.servers["inc_server"].url.as_deref(),
+                Some("https://example.com/expanded_val"),
+                "from_file_with_env should expand env vars in includes"
+            );
+        });
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn config_validates_security_mode_before_includes() {
+        let dir = std::env::temp_dir().join("forge-config-test-secmode-before-inc");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let main_path = dir.join("forge.toml");
+        std::fs::write(
+            &main_path,
+            r#"
+security_mode = "invalid_mode"
+
+[[include]]
+path = "https://example.com/never-fetched.toml"
+"#,
+        )
+        .unwrap();
+
+        let err = ForgeConfig::from_file(&main_path).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("unsupported security_mode"),
+            "should reject before fetching includes: {msg}"
         );
 
         std::fs::remove_dir_all(&dir).ok();

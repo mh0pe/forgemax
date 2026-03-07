@@ -118,26 +118,42 @@ pub fn check_config_valid(config_path: Option<&PathBuf>) -> Check {
 }
 
 /// Check that environment variable references in the config resolve.
+/// Scans both the main config file and any local included files.
 pub fn check_env_vars(config_path: Option<&PathBuf>) -> Check {
     let path = config_path.cloned().or_else(common::find_config_file);
     match path {
         Some(ref p) => match std::fs::read_to_string(p) {
             Ok(content) => {
-                let vars = common::find_env_var_refs(&content);
+                let mut all_vars = common::find_env_var_refs(&content);
+
+                // Also scan local included files for env var references
+                if let Ok(config) = forge_config::ForgeConfig::from_toml(&content) {
+                    let base_dir = p.parent().unwrap_or_else(|| std::path::Path::new("."));
+                    for entry in &config.include {
+                        if let Some(inc_content) = resolve_include_content(entry, base_dir) {
+                            all_vars.extend(common::find_env_var_refs(&inc_content));
+                        }
+                    }
+                }
+
                 let mut missing = Vec::new();
-                for var in &vars {
+                for var in &all_vars {
                     if std::env::var(var).is_err() {
                         missing.push(var.clone());
                     }
                 }
+                // Deduplicate missing vars
+                missing.sort();
+                missing.dedup();
+
                 if missing.is_empty() {
                     Check {
                         name: "env_vars".into(),
                         status: CheckStatus::Pass,
-                        message: if vars.is_empty() {
+                        message: if all_vars.is_empty() {
                             "no environment variable references found".into()
                         } else {
-                            format!("all {} env var references resolve", vars.len())
+                            format!("all {} env var references resolve", all_vars.len())
                         },
                         fix: None,
                     }
@@ -166,6 +182,30 @@ pub fn check_env_vars(config_path: Option<&PathBuf>) -> Check {
             fix: None,
         },
     }
+}
+
+/// Try to read the content of a local include entry for env var scanning.
+/// Returns None for remote includes or on read errors.
+fn resolve_include_content(
+    entry: &forge_config::IncludeEntry,
+    base_dir: &std::path::Path,
+) -> Option<String> {
+    let path_str = &entry.path;
+
+    // Only scan local includes (not remote)
+    if forge_config::is_remote_include(path_str) || path_str.starts_with("http://") {
+        return None;
+    }
+
+    let resolved = if let Some(file_path) = path_str.strip_prefix("file://") {
+        std::path::PathBuf::from(file_path)
+    } else if std::path::Path::new(path_str).is_absolute() {
+        std::path::PathBuf::from(path_str)
+    } else {
+        base_dir.join(path_str)
+    };
+
+    std::fs::read_to_string(&resolved).ok()
 }
 
 /// Check file permissions on the config file (Unix only).
@@ -400,7 +440,7 @@ pub fn check_security_mode(config_path: Option<&PathBuf>) -> Check {
     let has_remote_includes = config
         .include
         .iter()
-        .any(|i| i.path.starts_with("https://") || i.path.starts_with("github://"));
+        .any(|i| forge_config::is_remote_include(&i.path));
 
     if !has_remote_includes {
         return Check {
@@ -418,8 +458,7 @@ pub fn check_security_mode(config_path: Option<&PathBuf>) -> Check {
         .include
         .iter()
         .filter(|i| {
-            (i.path.starts_with("https://") || i.path.starts_with("github://"))
-                && i.sha512.is_none()
+            forge_config::is_remote_include(&i.path) && i.sha512.is_none()
         })
         .map(|i| i.path.as_str())
         .collect();
@@ -802,6 +841,38 @@ headers = { x-api-key = "\"my-key\"" }
             "check names should be unique: {:?}",
             names
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn lint_16_check_env_vars_scans_includes() {
+        let dir = std::env::temp_dir().join("forge-lint-test-env-includes");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Create an included file with an env var reference
+        let included_path = dir.join("shared.toml");
+        std::fs::write(
+            &included_path,
+            "[servers.inc]\ncommand = \"cmd\"\ntransport = \"stdio\"\nheaders = { Auth = \"${FORGE_LINT_INCLUDED_VAR}\" }\n",
+        )
+        .unwrap();
+
+        // Create main config that includes the above
+        let main_path = dir.join("forge.toml");
+        std::fs::write(
+            &main_path,
+            "[[include]]\npath = \"./shared.toml\"\n",
+        )
+        .unwrap();
+
+        let check = check_env_vars(Some(&main_path));
+        assert_eq!(check.status, CheckStatus::Fail, "{}", check.message);
+        assert!(
+            check.message.contains("FORGE_LINT_INCLUDED_VAR"),
+            "should detect env var in included file: {}",
+            check.message
+        );
+
         std::fs::remove_dir_all(&dir).ok();
     }
 }
