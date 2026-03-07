@@ -17,8 +17,8 @@ jobs:
         run: |
           REPO="${{ github.repository }}"
           sed -i \
-            -e "s|api.star-history.com/svg?repos=[^&]*&|api.star-history.com/svg?repos=${REPO}\&|g" \
-            -e "s|star-history.com/#[^&]*&|star-history.com/#${REPO}\&|g" \
+            -e "s|api.star-history.com/svg?repos=[^&)]*|api.star-history.com/svg?repos=${REPO}|g" \
+            -e "s|star-history.com/#[^&)]*|star-history.com/#${REPO}|g" \
             -e "s|contrib.rocks/image?repo=[^)]*)|contrib.rocks/image?repo=${REPO})|g" \
             -e "s|github.com/[^/]*/[^/]*/graphs/contributors|github.com/${REPO}/graphs/contributors|g" \
             README.md
@@ -38,5 +38,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add README.md
-          git commit -m "chore: sync README repo references [skip ci]"
+          git commit -m "chore: sync README repo references"
           git push
