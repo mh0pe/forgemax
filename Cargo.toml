@@ -62,7 +62,7 @@ schemars = "1.0"
 # AST validation (oxc)
 oxc_parser = "0.115"
 oxc_ast = "0.116"
-oxc_span = "0.115"
+oxc_span = "0.116"
 oxc_allocator = "0.115"
 
 # Fuzzy matching
