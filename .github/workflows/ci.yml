@@ -54,7 +54,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check required files exist
         run: |
-          for f in SECURITY.md CONTRIBUTING.md ROADMAP.md CHANGELOG.md UPGRADE.md; do
+          for f in SECURITY.md CONTRIBUTING.md ROADMAP.md CHANGELOG.md UPGRADE.md AGENTS.md; do
             [ -f "$f" ] || { echo "MISSING: $f"; exit 1; }
           done
       - name: Check README references
