@@ -734,10 +734,23 @@ fn load_include_content(
 
         match entry.sha512.as_deref() {
             Some(expected_hash) => {
-                if computed_hash != expected_hash {
+                // Normalize and validate the expected SHA-512 hash
+                let normalized_expected = expected_hash.trim().to_ascii_lowercase();
+                if normalized_expected.len() != 128
+                    || !normalized_expected
+                        .chars()
+                        .all(|c| c.is_ascii_hexdigit())
+                {
+                    return Err(ConfigError::Include(format!(
+                        "invalid sha512 hash for include '{}': {}",
+                        path_str, expected_hash
+                    )));
+                }
+
+                if computed_hash != normalized_expected {
                     return Err(ConfigError::Include(format!(
                         "SHA-512 mismatch for '{}': expected {}, got {}",
-                        path_str, expected_hash, computed_hash
+                        path_str, normalized_expected, computed_hash
                     )));
                 }
                 tracing::debug!(
