@@ -30,7 +30,11 @@ jobs:
         if: always()
         run: |
           if [ -f ash_output/reports/ash.summary.txt ]; then
-            echo "::warning::ASH scan found findings — review the summary below and the uploaded artifact for details."
+            if grep -qi "0 findings" ash_output/reports/ash.summary.txt; then
+              echo "::notice::ASH scan completed with zero findings — review the summary below."
+            else
+              echo "::warning::ASH scan found findings — review the summary below and the uploaded artifact for details."
+            fi
             cat ash_output/reports/ash.summary.txt
           fi
 
