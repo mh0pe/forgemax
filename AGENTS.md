@@ -31,7 +31,7 @@ Standards and workflows for AI agents operating in this repository.
   - `cli_` — CLI integration tests
 - **Security tests**: Bypass attempts and sandbox escape tests live alongside the code they protect.
 - **Mock server**: `forge-test-server` crate provides a mock MCP server for integration tests. Use it instead of spinning up real downstream servers.
-- **Test count**: ~700 tests across the workspace. Never remove existing tests without explicit justification.
+- **Test count**: Never remove existing tests without explicit justification. Run `cargo test --workspace` to verify the current count.
 
 ### Security Conventions
 
@@ -96,9 +96,9 @@ For each documentation file, verify every factual claim against the codebase:
 - **Feature lists**: Are documented features actually implemented? Search for the relevant code.
 - **CLI commands**: Do documented commands and flags match the `clap` definitions in `forge-cli`?
 - **Config options**: Do documented TOML keys match the config structs in `forge-config`?
-- **Test count claims**: Is the claimed test count (~700) still approximately correct? Run `cargo test --workspace 2>&1 | tail -5` to check.
-- **Example file count**: Does the claimed example count (7) match `ls examples/*.js | wc -l`?
-- **Security layers**: Does the defense-in-depth count (21 layers) match the actual table in SECURITY.md?
+- **Test count claims**: Does the claimed test count in README.md and CONTRIBUTING.md match `cargo test --workspace 2>&1 | tail -5`?
+- **Example file count**: Does the claimed example count in README.md match `ls examples/*.js | wc -l`?
+- **Security layers**: Does the defense-in-depth count in SECURITY.md match the actual table rows?
 - **Error variants**: Do documented `DispatchError` variants match the enum in `forge-error`?
 
 ### Step 2: Internal Consistency Check
