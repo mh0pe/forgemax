@@ -1,0 +1,35 @@
+name: Copilot Setup Steps
+on: workflow_dispatch
+
+permissions:
+  contents: read
+
+jobs:
+  copilot-setup-steps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ASH is installed here so the `ash mcp` stdio server is available
+      # to the Copilot coding agent. The repo admin must also add the MCP
+      # JSON configuration in Settings > Copilot > Coding agent:
+      #
+      #   {
+      #     "mcpServers": {
+      #       "ash": {
+      #         "type": "local",
+      #         "command": "ash",
+      #         "args": ["mcp"],
+      #         "tools": [
+      #           "scan_directory",
+      #           "get_scan_progress",
+      #           "get_scan_results",
+      #           "list_active_scans",
+      #           "cancel_scan",
+      #           "check_installation"
+      #         ]
+      #       }
+      #     }
+      #   }
+      - name: Install ASH v3.2.2
+        run: pipx install git+https://github.com/awslabs/automated-security-helper.git@v3.2.2
