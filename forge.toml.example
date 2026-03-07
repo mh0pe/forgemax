@@ -118,6 +118,7 @@ max_tool_calls = 50
 execution_mode = "child_process"
 max_resource_size_mb = 64   # Max size of a single resource read (default: 64 MB)
 max_parallel = 8            # Max concurrent calls in forge.parallel() (default: 8)
+# startup_concurrency = 4   # Max servers to connect concurrently at startup (default: half CPU cores)
 
 # ─── Session Stash (optional) ──────────────────────────────────────────
 #

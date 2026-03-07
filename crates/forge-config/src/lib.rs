@@ -174,6 +174,11 @@ pub struct SandboxOverrides {
     #[serde(default)]
     pub max_parallel: Option<usize>,
 
+    /// Maximum number of servers to connect to concurrently at startup.
+    /// Defaults to half the number of CPU cores available.
+    #[serde(default)]
+    pub startup_concurrency: Option<usize>,
+
     /// Stash configuration overrides.
     #[serde(default)]
     pub stash: Option<StashOverrides>,
@@ -352,6 +357,15 @@ impl ForgeConfig {
             }
         }
 
+        // CV-08: startup_concurrency must be >= 1
+        if let Some(concurrency) = self.sandbox.startup_concurrency {
+            if concurrency == 0 {
+                return Err(ConfigError::Invalid(
+                    "sandbox.startup_concurrency must be >= 1".into(),
+                ));
+            }
+        }
+
         if let Some(ref stash) = self.sandbox.stash {
             // CV-03: stash.max_value_size_mb must be > 0 and <= 256
             if let Some(size) = stash.max_value_size_mb {
@@ -463,6 +477,17 @@ impl ForgeConfig {
 
         Ok(())
     }
+}
+
+/// Returns the default startup concurrency: half the number of CPU cores, minimum 1.
+///
+/// This value is used when `sandbox.startup_concurrency` is not configured.
+/// It provides a sensible default that balances startup speed with system load.
+pub fn default_startup_concurrency() -> usize {
+    let cores = std::thread::available_parallelism()
+        .map(|p| p.get())
+        .unwrap_or(2);
+    (cores / 2).max(1)
 }
 
 /// Expand `${ENV_VAR}` patterns in a string using environment variables.
@@ -912,6 +937,33 @@ mod tests {
         let toml = "[sandbox]\nmax_concurrent = 4\nmax_parallel = 5";
         let err = ForgeConfig::from_toml(toml).unwrap_err().to_string();
         assert!(err.contains("max_parallel"), "got: {err}");
+    }
+
+    #[test]
+    fn cv08_startup_concurrency_must_be_positive() {
+        // Valid: any positive value
+        let toml = "[sandbox]\nstartup_concurrency = 4";
+        assert!(ForgeConfig::from_toml(toml).is_ok());
+
+        let toml = "[sandbox]\nstartup_concurrency = 1";
+        assert!(ForgeConfig::from_toml(toml).is_ok());
+
+        // Zero is invalid
+        let toml = "[sandbox]\nstartup_concurrency = 0";
+        let err = ForgeConfig::from_toml(toml).unwrap_err().to_string();
+        assert!(
+            err.contains("startup_concurrency"),
+            "expected 'startup_concurrency' in error: {err}"
+        );
+    }
+
+    #[test]
+    fn default_startup_concurrency_is_at_least_one() {
+        let concurrency = default_startup_concurrency();
+        assert!(
+            concurrency >= 1,
+            "default startup concurrency should be at least 1, got: {concurrency}"
+        );
     }
 
     #[test]
