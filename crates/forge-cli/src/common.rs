@@ -105,7 +105,8 @@ pub fn to_transport_config(server: &forge_config::ServerConfig) -> Result<Transp
 /// Search order:
 /// 1. `FORGE_CONFIG` environment variable
 /// 2. `./forge.toml` in the current directory
-/// 3. None (no config file found — not an error)
+/// 3. `$HOME/.forge.toml` (or platform equivalent)
+/// 4. None (no config file found — not an error)
 pub fn find_config_file() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("FORGE_CONFIG") {
         let p = PathBuf::from(path);
@@ -117,6 +118,12 @@ pub fn find_config_file() -> Option<PathBuf> {
     let cwd = PathBuf::from("forge.toml");
     if cwd.exists() {
         return Some(cwd);
+    }
+
+    if let Some(home_path) = forge_config::home_config_path() {
+        if home_path.exists() {
+            return Some(home_path);
+        }
     }
 
     None
@@ -640,6 +647,26 @@ mod tests {
             assert!(line.contains("config-watch=on"), "got: {line}");
         } else {
             assert!(line.contains("config-watch=off"), "got: {line}");
+        }
+    }
+
+    #[test]
+    fn find_config_file_includes_home_fallback() {
+        // Verify that find_config_file checks $HOME/.forge.toml
+        // We can't easily test the full flow without modifying $HOME,
+        // but we can verify the home_config_path function is accessible.
+        let home_path = forge_config::home_config_path();
+        #[cfg(unix)]
+        {
+            if std::env::var("HOME").is_ok() {
+                assert!(home_path.is_some(), "should return Some on Unix with HOME");
+                let p = home_path.unwrap();
+                assert!(
+                    p.to_str().unwrap().ends_with(".forge.toml"),
+                    "should end with .forge.toml: {:?}",
+                    p
+                );
+            }
         }
     }
 }

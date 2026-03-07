@@ -77,6 +77,9 @@ arc-swap = "1"
 # File watching
 notify = "7"
 
+# HTTP client (lightweight, blocking)
+ureq = "2"
+
 # Security / audit
 sha2 = "0.10"
 uuid = { version = "1", features = ["v4"] }

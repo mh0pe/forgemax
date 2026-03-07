@@ -4,7 +4,8 @@
 //!
 //! Configuration loading for the Forgemax Code Mode MCP Gateway.
 //!
-//! Supports TOML configuration files with environment variable expansion.
+//! Supports TOML configuration files with environment variable expansion
+//! and config file includes (local and remote).
 //!
 //! ## Example
 //!
@@ -25,14 +26,35 @@
 //! max_concurrent = 8
 //! max_tool_calls = 50
 //! ```
+//!
+//! ## Includes
+//!
+//! Config files can include other config files using `[[include]]`:
+//!
+//! ```toml
+//! [[include]]
+//! path = "./shared-servers.toml"
+//!
+//! [[include]]
+//! path = "https://example.com/team-config.toml"
+//! sha512 = "abc123..."
+//! ```
+//!
+//! ## Security Modes
+//!
+//! - `auto-pin` (default): Remote includes without a `sha512` hash are allowed
+//!   but a warning is logged with the computed hash for pinning.
+//! - `strict`: All remote includes must have a valid `sha512` hash.
 
 #[cfg(feature = "config-watch")]
 pub mod watcher;
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha512};
 use thiserror::Error;
 
 /// Errors from config parsing.
@@ -50,11 +72,46 @@ pub enum ConfigError {
     /// Invalid configuration value.
     #[error("invalid config: {0}")]
     Invalid(String),
+
+    /// Failed to fetch remote include.
+    #[error("include error: {0}")]
+    Include(String),
+}
+
+/// An entry in the `[[include]]` array.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct IncludeEntry {
+    /// Path or URL to include. Supports:
+    /// - Relative path (resolved relative to the including config file)
+    /// - Absolute path
+    /// - `file:///path` URI
+    /// - `https://url` URI
+    /// - `github://owner/repo/path` (resolves to raw.githubusercontent.com, defaults to `main`)
+    /// - `github://owner/repo@ref/path` (specific branch/tag/SHA)
+    pub path: String,
+
+    /// SHA-512 hash of the remote content for integrity verification.
+    /// Required when `security_mode = "strict"` for remote includes.
+    #[serde(default)]
+    pub sha512: Option<String>,
 }
 
 /// Top-level Forge configuration.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ForgeConfig {
+    /// Security mode for remote includes.
+    /// - `"auto-pin"` (default): allow remote includes without hashes, log computed hash.
+    /// - `"strict"`: require SHA-512 hashes for all remote includes.
+    #[serde(default = "default_security_mode")]
+    pub security_mode: String,
+
+    /// Config file includes. Processed in order; servers and groups from
+    /// includes are merged (main config wins on key conflicts).
+    /// After processing, this field retains only the main config's entries
+    /// (nested includes from included files are not followed).
+    #[serde(default)]
+    pub include: Vec<IncludeEntry>,
+
     /// Downstream MCP server configurations, keyed by server name.
     #[serde(default)]
     pub servers: HashMap<String, ServerConfig>,
@@ -70,6 +127,10 @@ pub struct ForgeConfig {
     /// Manifest refresh behavior.
     #[serde(default)]
     pub manifest: ManifestConfig,
+}
+
+fn default_security_mode() -> String {
+    "auto-pin".to_string()
 }
 
 /// Configuration for manifest refresh behavior.
@@ -245,31 +306,116 @@ pub struct StashOverrides {
 
 impl ForgeConfig {
     /// Parse a config from a TOML string.
+    ///
+    /// Includes are **not** processed in this path because there is no
+    /// file context to resolve relative paths. Use [`from_file`] or
+    /// [`from_file_with_env`] to process includes.
     pub fn from_toml(toml_str: &str) -> Result<Self, ConfigError> {
         let config: ForgeConfig = toml::from_str(toml_str)?;
         config.validate()?;
         Ok(config)
     }
 
-    /// Load config from a file path.
+    /// Load config from a file path. Processes `[[include]]` entries.
+    /// Environment variables are **not** expanded (use [`from_file_with_env`]
+    /// if expansion is needed).
     pub fn from_file(path: &Path) -> Result<Self, ConfigError> {
         let content = std::fs::read_to_string(path)?;
-        Self::from_toml(&content)
+        let mut config: ForgeConfig = toml::from_str(&content)?;
+        config.validate_security_mode()?;
+        config.process_includes(path, false)?;
+        config.validate()?;
+        Ok(config)
     }
 
     /// Parse a config from a TOML string, expanding `${ENV_VAR}` references.
+    ///
+    /// Includes are **not** processed in this path. Use [`from_file_with_env`].
     pub fn from_toml_with_env(toml_str: &str) -> Result<Self, ConfigError> {
         let expanded = expand_env_vars(toml_str);
         Self::from_toml(&expanded)
     }
 
     /// Load config from a file path, expanding environment variables.
+    /// Processes `[[include]]` entries.
     pub fn from_file_with_env(path: &Path) -> Result<Self, ConfigError> {
         let content = std::fs::read_to_string(path)?;
-        Self::from_toml_with_env(&content)
+        let expanded = expand_env_vars(&content);
+        let mut config: ForgeConfig = toml::from_str(&expanded)?;
+        config.validate_security_mode()?;
+        config.process_includes(path, true)?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Merge servers and groups from another config. Self wins on key conflicts.
+    fn merge_from(&mut self, other: ForgeConfig) {
+        for (name, server) in other.servers {
+            self.servers.entry(name).or_insert(server);
+        }
+        for (name, group) in other.groups {
+            self.groups.entry(name).or_insert(group);
+        }
+    }
+
+    /// Validate security_mode before processing includes.
+    fn validate_security_mode(&self) -> Result<(), ConfigError> {
+        match self.security_mode.as_str() {
+            "auto-pin" | "strict" => Ok(()),
+            other => Err(ConfigError::Invalid(format!(
+                "unsupported security_mode '{}', supported: auto-pin, strict",
+                other
+            ))),
+        }
+    }
+
+    /// Process `[[include]]` entries, loading and merging included configs.
+    /// Nested includes (includes within included files) are not followed.
+    /// If `expand_env` is true, environment variables in included content are expanded.
+    fn process_includes(
+        &mut self,
+        config_path: &Path,
+        expand_env: bool,
+    ) -> Result<(), ConfigError> {
+        if self.include.is_empty() {
+            return Ok(());
+        }
+
+        let base_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
+        let entries = std::mem::take(&mut self.include);
+
+        for entry in &entries {
+            let content = load_include_content(entry, base_dir, &self.security_mode)?;
+            let parsed_content = if expand_env {
+                expand_env_vars(&content)
+            } else {
+                content
+            };
+            let included: ForgeConfig = toml::from_str(&parsed_content).map_err(|e| {
+                ConfigError::Include(format!("failed to parse include '{}': {}", entry.path, e))
+            })?;
+            self.merge_from(included);
+        }
+
+        // Preserve the main config's include entries so callers can inspect
+        // which files were included. Note: this only contains entries from the
+        // main config — nested includes (from included files) are not followed.
+        self.include = entries;
+        Ok(())
     }
 
     fn validate(&self) -> Result<(), ConfigError> {
+        // Validate security_mode
+        match self.security_mode.as_str() {
+            "auto-pin" | "strict" => {}
+            other => {
+                return Err(ConfigError::Invalid(format!(
+                    "unsupported security_mode '{}', supported: auto-pin, strict",
+                    other
+                )));
+            }
+        }
+
         for (name, server) in &self.servers {
             match server.transport.as_str() {
                 "stdio" => {
@@ -518,6 +664,215 @@ fn expand_env_vars(input: &str) -> String {
     }
 
     result
+}
+
+/// Check whether an include path refers to a remote resource.
+///
+/// Only `https://` and `github://` are supported. Plain `http://` is
+/// rejected because it is vulnerable to MITM tampering.
+pub fn is_remote_include(path: &str) -> bool {
+    path.starts_with("https://") || path.starts_with("github://")
+}
+
+/// Resolve a `github://` URI to an HTTPS URL for raw content.
+///
+/// Supported formats:
+/// - `github://owner/repo/path/to/file` (defaults to `main` branch)
+/// - `github://owner/repo@ref/path/to/file` (specific branch, tag, or SHA)
+fn resolve_github_uri(uri: &str) -> Result<String, ConfigError> {
+    let remainder = uri.strip_prefix("github://").ok_or_else(|| {
+        ConfigError::Include(format!("invalid github URI: {}", uri))
+    })?;
+
+    // Split into owner, repo (possibly with @ref), and path
+    let parts: Vec<&str> = remainder.splitn(3, '/').collect();
+    if parts.len() < 3 {
+        return Err(ConfigError::Include(format!(
+            "github URI must be github://owner/repo/path: {}",
+            uri
+        )));
+    }
+
+    let owner = parts[0];
+    let (repo, git_ref) = if let Some((r, reference)) = parts[1].split_once('@') {
+        (r, reference)
+    } else {
+        (parts[1], "main")
+    };
+    let path = parts[2];
+
+    Ok(format!(
+        "https://raw.githubusercontent.com/{}/{}/{}/{}",
+        owner, repo, git_ref, path
+    ))
+}
+
+/// Compute the SHA-512 hash of content, returning it as a lowercase hex string.
+fn compute_sha512(content: &str) -> String {
+    let mut hasher = Sha512::new();
+    hasher.update(content.as_bytes());
+    let result = hasher.finalize();
+    result
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<String>()
+}
+
+/// Maximum response body size for remote includes (1 MB).
+///
+/// Config files are TOML text and should never be this large. This limit
+/// prevents accidental or malicious large downloads during config loading.
+const MAX_REMOTE_INCLUDE_BYTES: u64 = 1_048_576;
+
+/// Fetch content from a remote URL with timeouts and size limits.
+fn fetch_remote(url: &str) -> Result<String, ConfigError> {
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(std::time::Duration::from_secs(10))
+        .timeout_read(std::time::Duration::from_secs(30))
+        .build();
+
+    let response = agent.get(url).call().map_err(|e| {
+        ConfigError::Include(format!("failed to fetch '{}': {}", url, e))
+    })?;
+
+    let content_len = response
+        .header("Content-Length")
+        .and_then(|v| v.parse::<u64>().ok());
+    if let Some(len) = content_len {
+        if len > MAX_REMOTE_INCLUDE_BYTES {
+            return Err(ConfigError::Include(format!(
+                "remote include '{}' is too large ({} bytes, max {} bytes)",
+                url, len, MAX_REMOTE_INCLUDE_BYTES
+            )));
+        }
+    }
+
+    let mut body = String::new();
+    response
+        .into_reader()
+        .take(MAX_REMOTE_INCLUDE_BYTES)
+        .read_to_string(&mut body)
+        .map_err(|e| {
+            ConfigError::Include(format!("failed to read response from '{}': {}", url, e))
+        })?;
+    Ok(body)
+}
+
+/// Load content for an include entry, handling local files and remote URLs.
+fn load_include_content(
+    entry: &IncludeEntry,
+    base_dir: &Path,
+    security_mode: &str,
+) -> Result<String, ConfigError> {
+    let path_str = &entry.path;
+
+    // Handle file:// URI by stripping the scheme
+    if let Some(file_path) = path_str.strip_prefix("file://") {
+        let p = PathBuf::from(file_path);
+        return std::fs::read_to_string(&p).map_err(|e| {
+            ConfigError::Include(format!("failed to read '{}': {}", p.display(), e))
+        });
+    }
+
+    // Reject plaintext HTTP — vulnerable to MITM
+    if path_str.starts_with("http://") {
+        return Err(ConfigError::Include(format!(
+            "plaintext http:// includes are not supported (use https://): {}",
+            path_str
+        )));
+    }
+
+    // Remote includes: https:// or github://
+    if is_remote_include(path_str) {
+        let url = if path_str.starts_with("github://") {
+            resolve_github_uri(path_str)?
+        } else {
+            path_str.to_string()
+        };
+
+        let content = fetch_remote(&url)?;
+
+        // SHA-512 verification
+        let computed_hash = compute_sha512(&content);
+
+        match entry.sha512.as_deref() {
+            Some(expected_hash) => {
+                // Normalize and validate the expected SHA-512 hash
+                let normalized_expected = expected_hash.trim().to_ascii_lowercase();
+                if normalized_expected.len() != 128
+                    || !normalized_expected
+                        .chars()
+                        .all(|c| c.is_ascii_hexdigit())
+                {
+                    return Err(ConfigError::Include(format!(
+                        "invalid sha512 hash for include '{}': {}",
+                        path_str, expected_hash
+                    )));
+                }
+
+                if computed_hash != normalized_expected {
+                    return Err(ConfigError::Include(format!(
+                        "SHA-512 mismatch for '{}': expected {}, got {}",
+                        path_str, normalized_expected, computed_hash
+                    )));
+                }
+                tracing::debug!(
+                    include = path_str,
+                    "remote include hash verified"
+                );
+            }
+            None => {
+                if security_mode == "strict" {
+                    return Err(ConfigError::Include(format!(
+                        "security_mode is 'strict' but include '{}' has no sha512 hash; \
+                         add: sha512 = \"{}\"",
+                        path_str, computed_hash
+                    )));
+                }
+                // auto-pin: warn with the computed hash
+                tracing::warn!(
+                    include = path_str,
+                    sha512 = computed_hash.as_str(),
+                    "remote include loaded without hash — pin with: sha512 = \"{}\"",
+                    computed_hash
+                );
+            }
+        }
+
+        return Ok(content);
+    }
+
+    // Local file include (relative or absolute path)
+    let resolved = if Path::new(path_str).is_absolute() {
+        PathBuf::from(path_str)
+    } else {
+        base_dir.join(path_str)
+    };
+
+    std::fs::read_to_string(&resolved).map_err(|e| {
+        ConfigError::Include(format!(
+            "failed to read include '{}' (resolved to '{}'): {}",
+            path_str,
+            resolved.display(),
+            e
+        ))
+    })
+}
+
+/// Return the default config path in the user's home directory.
+///
+/// Returns `$HOME/.forge.toml` on Unix, `%USERPROFILE%\.forge.toml` on Windows.
+pub fn home_config_path() -> Option<PathBuf> {
+    #[cfg(unix)]
+    let home = std::env::var("HOME").ok();
+    #[cfg(windows)]
+    let home = std::env::var("USERPROFILE")
+        .ok()
+        .or_else(|| std::env::var("HOME").ok());
+    #[cfg(not(any(unix, windows)))]
+    let home: Option<String> = None;
+
+    home.map(|h| PathBuf::from(h).join(".forge.toml"))
 }
 
 #[cfg(test)]
@@ -1319,5 +1674,595 @@ mod tests {
             ConfigError::Invalid(_) | ConfigError::Parse(_) => {}
             _ => {}
         }
+    }
+
+    // --- Include and security_mode tests ---
+
+    #[test]
+    fn config_defaults_security_mode_auto_pin() {
+        let toml = "";
+        let config = ForgeConfig::from_toml(toml).unwrap();
+        assert_eq!(config.security_mode, "auto-pin");
+    }
+
+    #[test]
+    fn config_parses_security_mode_strict() {
+        let toml = r#"security_mode = "strict""#;
+        let config = ForgeConfig::from_toml(toml).unwrap();
+        assert_eq!(config.security_mode, "strict");
+    }
+
+    #[test]
+    fn config_rejects_invalid_security_mode() {
+        let toml = r#"security_mode = "yolo""#;
+        let err = ForgeConfig::from_toml(toml).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("yolo"), "should mention mode: {msg}");
+        assert!(
+            msg.contains("security_mode"),
+            "should mention field: {msg}"
+        );
+    }
+
+    #[test]
+    fn config_defaults_include_empty() {
+        let toml = "";
+        let config = ForgeConfig::from_toml(toml).unwrap();
+        assert!(config.include.is_empty());
+    }
+
+    #[test]
+    fn config_parses_include_entries() {
+        let toml = r#"
+            [[include]]
+            path = "./shared.toml"
+
+            [[include]]
+            path = "https://example.com/config.toml"
+            sha512 = "abc123"
+        "#;
+        let config = ForgeConfig::from_toml(toml).unwrap();
+        assert_eq!(config.include.len(), 2);
+        assert_eq!(config.include[0].path, "./shared.toml");
+        assert!(config.include[0].sha512.is_none());
+        assert_eq!(config.include[1].path, "https://example.com/config.toml");
+        assert_eq!(config.include[1].sha512.as_deref(), Some("abc123"));
+    }
+
+    #[test]
+    fn config_local_include_merges_servers() {
+        let dir = std::env::temp_dir().join("forge-config-test-include");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Create included config file
+        let included_path = dir.join("shared.toml");
+        std::fs::write(
+            &included_path,
+            r#"
+[servers.shared_server]
+command = "shared-mcp"
+transport = "stdio"
+"#,
+        )
+        .unwrap();
+
+        // Create main config file
+        let main_path = dir.join("forge.toml");
+        std::fs::write(
+            &main_path,
+            r#"
+[[include]]
+path = "./shared.toml"
+
+[servers.local_server]
+command = "local-mcp"
+transport = "stdio"
+"#,
+        )
+        .unwrap();
+
+        let config = ForgeConfig::from_file(&main_path).unwrap();
+        assert_eq!(config.servers.len(), 2);
+        assert!(config.servers.contains_key("local_server"));
+        assert!(config.servers.contains_key("shared_server"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn config_local_include_main_wins_on_conflict() {
+        let dir = std::env::temp_dir().join("forge-config-test-include-conflict");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Create included config with server "x"
+        let included_path = dir.join("shared.toml");
+        std::fs::write(
+            &included_path,
+            r#"
+[servers.x]
+command = "from-include"
+transport = "stdio"
+"#,
+        )
+        .unwrap();
+
+        // Create main config with the same server "x"
+        let main_path = dir.join("forge.toml");
+        std::fs::write(
+            &main_path,
+            r#"
+[[include]]
+path = "./shared.toml"
+
+[servers.x]
+command = "from-main"
+transport = "stdio"
+"#,
+        )
+        .unwrap();
+
+        let config = ForgeConfig::from_file(&main_path).unwrap();
+        assert_eq!(config.servers.len(), 1);
+        assert_eq!(
+            config.servers["x"].command.as_deref(),
+            Some("from-main"),
+            "main config should win on conflict"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn config_local_include_absolute_path() {
+        let dir = std::env::temp_dir().join("forge-config-test-include-abs");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let included_path = dir.join("abs-include.toml");
+        std::fs::write(
+            &included_path,
+            r#"
+[servers.abs_server]
+command = "abs-mcp"
+transport = "stdio"
+"#,
+        )
+        .unwrap();
+
+        let main_path = dir.join("forge.toml");
+        std::fs::write(
+            &main_path,
+            format!(
+                r#"
+[[include]]
+path = "{}"
+"#,
+                included_path.display()
+            ),
+        )
+        .unwrap();
+
+        let config = ForgeConfig::from_file(&main_path).unwrap();
+        assert!(config.servers.contains_key("abs_server"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn config_local_include_file_uri() {
+        let dir = std::env::temp_dir().join("forge-config-test-include-file-uri");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let included_path = dir.join("file-include.toml");
+        std::fs::write(
+            &included_path,
+            r#"
+[servers.file_server]
+command = "file-mcp"
+transport = "stdio"
+"#,
+        )
+        .unwrap();
+
+        let main_path = dir.join("forge.toml");
+        std::fs::write(
+            &main_path,
+            format!(
+                r#"
+[[include]]
+path = "file://{}"
+"#,
+                included_path.display()
+            ),
+        )
+        .unwrap();
+
+        let config = ForgeConfig::from_file(&main_path).unwrap();
+        assert!(config.servers.contains_key("file_server"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn config_include_missing_file_errors() {
+        let dir = std::env::temp_dir().join("forge-config-test-include-missing");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let main_path = dir.join("forge.toml");
+        std::fs::write(
+            &main_path,
+            r#"
+[[include]]
+path = "./does-not-exist.toml"
+"#,
+        )
+        .unwrap();
+
+        let err = ForgeConfig::from_file(&main_path).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("does-not-exist.toml"),
+            "should mention missing file: {msg}"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn config_include_merges_groups() {
+        let dir = std::env::temp_dir().join("forge-config-test-include-groups");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let included_path = dir.join("shared.toml");
+        std::fs::write(
+            &included_path,
+            r#"
+[servers.inc_server]
+command = "inc-mcp"
+transport = "stdio"
+
+[groups.inc_group]
+servers = ["inc_server"]
+isolation = "open"
+"#,
+        )
+        .unwrap();
+
+        let main_path = dir.join("forge.toml");
+        std::fs::write(
+            &main_path,
+            r#"
+[[include]]
+path = "./shared.toml"
+
+[servers.main_server]
+command = "main-mcp"
+transport = "stdio"
+
+[groups.main_group]
+servers = ["main_server"]
+isolation = "strict"
+"#,
+        )
+        .unwrap();
+
+        let config = ForgeConfig::from_file(&main_path).unwrap();
+        assert_eq!(config.servers.len(), 2);
+        assert_eq!(config.groups.len(), 2);
+        assert!(config.groups.contains_key("inc_group"));
+        assert!(config.groups.contains_key("main_group"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn config_include_env_expansion_in_included_file() {
+        let dir = std::env::temp_dir().join("forge-config-test-include-env");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let included_path = dir.join("env-include.toml");
+        std::fs::write(
+            &included_path,
+            r#"
+[servers.env_server]
+url = "https://example.com/${FORGE_INCLUDE_TEST_TOKEN}"
+transport = "sse"
+"#,
+        )
+        .unwrap();
+
+        let main_path = dir.join("forge.toml");
+        std::fs::write(
+            &main_path,
+            r#"
+[[include]]
+path = "./env-include.toml"
+"#,
+        )
+        .unwrap();
+
+        temp_env::with_var("FORGE_INCLUDE_TEST_TOKEN", Some("secret_val"), || {
+            let config = ForgeConfig::from_file_with_env(&main_path).unwrap();
+            assert_eq!(
+                config.servers["env_server"].url.as_deref(),
+                Some("https://example.com/secret_val")
+            );
+        });
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn is_remote_include_identifies_remotes() {
+        assert!(is_remote_include("https://example.com/config.toml"));
+        assert!(!is_remote_include("http://example.com/config.toml"));
+        assert!(is_remote_include("github://org/repo/file.toml"));
+        assert!(!is_remote_include("./local.toml"));
+        assert!(!is_remote_include("/absolute/path.toml"));
+        assert!(!is_remote_include("file:///path/to/file.toml"));
+    }
+
+    #[test]
+    fn resolve_github_uri_default_branch() {
+        let url =
+            resolve_github_uri("github://myorg/myrepo/configs/forge.toml").unwrap();
+        assert_eq!(
+            url,
+            "https://raw.githubusercontent.com/myorg/myrepo/main/configs/forge.toml"
+        );
+    }
+
+    #[test]
+    fn resolve_github_uri_with_ref() {
+        let url =
+            resolve_github_uri("github://myorg/myrepo@v1.0/configs/forge.toml").unwrap();
+        assert_eq!(
+            url,
+            "https://raw.githubusercontent.com/myorg/myrepo/v1.0/configs/forge.toml"
+        );
+    }
+
+    #[test]
+    fn resolve_github_uri_with_sha_ref() {
+        let url =
+            resolve_github_uri("github://myorg/myrepo@abc123/path/file.toml").unwrap();
+        assert_eq!(
+            url,
+            "https://raw.githubusercontent.com/myorg/myrepo/abc123/path/file.toml"
+        );
+    }
+
+    #[test]
+    fn resolve_github_uri_invalid_format() {
+        // Missing path component
+        let err = resolve_github_uri("github://myorg/myrepo").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("github://"), "should mention format: {msg}");
+    }
+
+    #[test]
+    fn compute_sha512_deterministic() {
+        let hash1 = compute_sha512("hello world");
+        let hash2 = compute_sha512("hello world");
+        assert_eq!(hash1, hash2);
+        assert_eq!(hash1.len(), 128); // SHA-512 = 64 bytes = 128 hex chars
+    }
+
+    #[test]
+    fn compute_sha512_different_input() {
+        let hash1 = compute_sha512("hello");
+        let hash2 = compute_sha512("world");
+        assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn home_config_path_returns_some() {
+        // On Unix CI, HOME is typically set
+        #[cfg(unix)]
+        {
+            if std::env::var("HOME").is_ok() {
+                let path = home_config_path();
+                assert!(path.is_some());
+                let p = path.unwrap();
+                assert!(p.to_str().unwrap().ends_with(".forge.toml"));
+            }
+        }
+    }
+
+    #[test]
+    fn config_backward_compat_no_include_no_security_mode() {
+        // Old configs without include/security_mode should still parse
+        let toml = r#"
+            [servers.test]
+            command = "test"
+            transport = "stdio"
+
+            [sandbox]
+            timeout_secs = 5
+
+            [groups.g]
+            servers = ["test"]
+        "#;
+        let config = ForgeConfig::from_toml(toml).unwrap();
+        assert_eq!(config.security_mode, "auto-pin");
+        assert!(config.include.is_empty());
+        assert_eq!(config.servers.len(), 1);
+    }
+
+    #[test]
+    fn config_nested_includes_not_followed() {
+        // Verify that includes in included files are not processed
+        let dir = std::env::temp_dir().join("forge-config-test-nested-include");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Create a "grandchild" include (should NOT be loaded)
+        let grandchild_path = dir.join("grandchild.toml");
+        std::fs::write(
+            &grandchild_path,
+            r#"
+[servers.grandchild_server]
+command = "grandchild"
+transport = "stdio"
+"#,
+        )
+        .unwrap();
+
+        // Create "child" include that itself has an include
+        let child_path = dir.join("child.toml");
+        std::fs::write(
+            &child_path,
+            r#"
+[[include]]
+path = "./grandchild.toml"
+
+[servers.child_server]
+command = "child"
+transport = "stdio"
+"#,
+        )
+        .unwrap();
+
+        let main_path = dir.join("forge.toml");
+        std::fs::write(
+            &main_path,
+            r#"
+[[include]]
+path = "./child.toml"
+"#,
+        )
+        .unwrap();
+
+        let config = ForgeConfig::from_file(&main_path).unwrap();
+        // child_server should be present
+        assert!(config.servers.contains_key("child_server"));
+        // grandchild_server should NOT be present (nested includes not followed)
+        assert!(
+            !config.servers.contains_key("grandchild_server"),
+            "nested includes should not be followed"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn config_rejects_http_include() {
+        let toml = r#"
+[[include]]
+path = "http://example.com/evil.toml"
+"#;
+        let dir = std::env::temp_dir().join("forge-config-test-http-reject");
+        std::fs::create_dir_all(&dir).unwrap();
+        let main_path = dir.join("forge.toml");
+        std::fs::write(&main_path, toml).unwrap();
+
+        let err = ForgeConfig::from_file(&main_path).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("http://") && msg.contains("not supported"),
+            "should reject http:// include: {msg}"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn config_from_file_does_not_expand_env_in_includes() {
+        let dir = std::env::temp_dir().join("forge-config-test-no-expand");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let included_path = dir.join("inc.toml");
+        std::fs::write(
+            &included_path,
+            r#"
+[servers.inc_server]
+url = "https://example.com/${FORGE_NO_EXPAND_TEST_VAR}"
+transport = "sse"
+"#,
+        )
+        .unwrap();
+
+        let main_path = dir.join("forge.toml");
+        std::fs::write(
+            &main_path,
+            r#"
+[[include]]
+path = "./inc.toml"
+"#,
+        )
+        .unwrap();
+
+        // from_file should NOT expand env vars in includes
+        let config = ForgeConfig::from_file(&main_path).unwrap();
+        assert_eq!(
+            config.servers["inc_server"].url.as_deref(),
+            Some("https://example.com/${FORGE_NO_EXPAND_TEST_VAR}"),
+            "from_file should not expand env vars in includes"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn config_from_file_with_env_expands_env_in_includes() {
+        let dir = std::env::temp_dir().join("forge-config-test-expand");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let included_path = dir.join("inc.toml");
+        std::fs::write(
+            &included_path,
+            r#"
+[servers.inc_server]
+url = "https://example.com/${FORGE_EXPAND_TEST_VAR}"
+transport = "sse"
+"#,
+        )
+        .unwrap();
+
+        let main_path = dir.join("forge.toml");
+        std::fs::write(
+            &main_path,
+            r#"
+[[include]]
+path = "./inc.toml"
+"#,
+        )
+        .unwrap();
+
+        temp_env::with_var("FORGE_EXPAND_TEST_VAR", Some("expanded_val"), || {
+            let config = ForgeConfig::from_file_with_env(&main_path).unwrap();
+            assert_eq!(
+                config.servers["inc_server"].url.as_deref(),
+                Some("https://example.com/expanded_val"),
+                "from_file_with_env should expand env vars in includes"
+            );
+        });
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn config_validates_security_mode_before_includes() {
+        let dir = std::env::temp_dir().join("forge-config-test-secmode-before-inc");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let main_path = dir.join("forge.toml");
+        std::fs::write(
+            &main_path,
+            r#"
+security_mode = "invalid_mode"
+
+[[include]]
+path = "https://example.com/never-fetched.toml"
+"#,
+        )
+        .unwrap();
+
+        let err = ForgeConfig::from_file(&main_path).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("unsupported security_mode"),
+            "should reject before fetching includes: {msg}"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
