@@ -33,6 +33,8 @@ enum Commands {
     Serve,
     /// Validate configuration and connectivity.
     Doctor(cmd::doctor::DoctorArgs),
+    /// Validate configuration without running servers.
+    Lint(cmd::lint::LintArgs),
     /// Inspect the capability manifest from connected servers.
     Manifest(cmd::manifest::ManifestArgs),
     /// Execute a JavaScript file against configured servers.
@@ -57,6 +59,7 @@ async fn main() -> Result<()> {
     match cli.command {
         None | Some(Commands::Serve) => cmd::serve::execute(cli.config).await,
         Some(Commands::Doctor(args)) => cmd::doctor::execute(&args, cli.config).await,
+        Some(Commands::Lint(args)) => cmd::lint::execute(&args, cli.config).await,
         Some(Commands::Manifest(args)) => cmd::manifest::execute(&args, cli.config).await,
         Some(Commands::Run(args)) => cmd::run::execute(&args, cli.config).await,
         Some(Commands::Init(args)) => cmd::init::execute(&args).await,
@@ -142,6 +145,22 @@ mod tests {
     fn cli_s11_init_subcommand() {
         let cli = Cli::try_parse_from(["forgemax", "init"]).unwrap();
         assert!(matches!(cli.command, Some(Commands::Init(_))));
+    }
+
+    #[test]
+    fn cli_s12_lint_subcommand() {
+        let cli = Cli::try_parse_from(["forgemax", "lint"]).unwrap();
+        assert!(matches!(cli.command, Some(Commands::Lint(_))));
+    }
+
+    #[test]
+    fn cli_s13_lint_json_flag() {
+        let cli = Cli::try_parse_from(["forgemax", "lint", "--json"]).unwrap();
+        if let Some(Commands::Lint(args)) = cli.command {
+            assert!(args.json);
+        } else {
+            panic!("expected Lint command");
+        }
     }
 
     #[test]
