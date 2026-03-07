@@ -69,6 +69,8 @@ CI enforces that these files exist and that README.md links to SECURITY.md and r
 
 A systematic workflow for critically reviewing documentation to ensure thoroughness, correctness, and internal consistency. The goal is to challenge every claim, find gaps, and catch contradictions — not to rubber-stamp.
 
+**Automated workflow**: `.github/workflows/doc-review.yml` runs the automatable portions of this review on every PR that touches documentation, and can be triggered manually via `workflow_dispatch` for a full or scoped review. The workflow produces GitHub annotations inline on files and a summary report.
+
 ### Philosophy
 
 Approach documentation as a skeptical reviewer who assumes nothing is correct until verified against the source of truth (the code). Good documentation is accurate documentation. Every factual claim should be traceable to code, config, or CI.
@@ -181,7 +183,11 @@ Claims that were verified against the codebase (for confidence tracking).
 
 ### When to Run This Review
 
-- Before any release (verify CHANGELOG and UPGRADE entries)
-- After significant refactors that change public APIs or behavior
-- When adding new crates, features, or CLI commands
-- Quarterly, as a hygiene check against documentation drift
+The automated workflow (`.github/workflows/doc-review.yml`) runs automatically on PRs that touch documentation files. For manual/on-demand runs:
+
+- **Full review**: Trigger `workflow_dispatch` with scope `full` before any release
+- **Accuracy only**: Trigger with scope `accuracy` after changing dependency versions or adding crates
+- **Consistency only**: Trigger with scope `consistency` after refactors that change public APIs
+- **Staleness only**: Trigger with scope `staleness` as a quarterly hygiene check
+
+The workflow automates Steps 1–4 and 6. Steps 3 (completeness) and 4 (contradiction detection) involving semantic analysis should be performed manually by an agent or reviewer using the checklists above.

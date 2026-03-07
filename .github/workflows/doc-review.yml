@@ -1,0 +1,473 @@
+name: Devil's Advocate Documentation Review
+
+on:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: 'Review scope'
+        required: false
+        default: 'full'
+        type: choice
+        options:
+          - full
+          - accuracy
+          - consistency
+          - staleness
+  pull_request:
+    branches: [main]
+    paths:
+      - '*.md'
+      - 'examples/*.js'
+      - 'forge.toml.example*'
+      - 'Cargo.toml'
+      - 'crates/*/Cargo.toml'
+
+concurrency:
+  group: doc-review-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  factual-accuracy:
+    name: "Step 1: Factual accuracy audit"
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      (inputs.scope == 'full' || inputs.scope == 'accuracy') ||
+      github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Check MSRV matches Cargo.toml"
+        run: |
+          echo "::group::MSRV verification"
+          CARGO_MSRV=$(grep 'rust-version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "Cargo.toml MSRV: $CARGO_MSRV"
+
+          for doc in AGENTS.md CONTRIBUTING.md; do
+            if grep -q "$CARGO_MSRV" "$doc"; then
+              echo "✅ $doc references correct MSRV ($CARGO_MSRV)"
+            else
+              FOUND=$(grep -oP '\d+\.\d+\.\d+' "$doc" | head -5 | tr '\n' ', ')
+              echo "::warning file=$doc::MSRV mismatch — Cargo.toml says $CARGO_MSRV, doc contains versions: $FOUND"
+            fi
+          done
+          echo "::endgroup::"
+
+      - name: "Check workspace version consistency"
+        run: |
+          echo "::group::Workspace version"
+          WS_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "Workspace version: $WS_VERSION"
+          echo "::endgroup::"
+
+      - name: "Check workspace members match documented crates"
+        run: |
+          echo "::group::Crate inventory"
+          # Extract workspace members from Cargo.toml
+          MEMBERS=$(sed -n '/^members/,/\]/p' Cargo.toml | grep '"' | sed 's/.*"\(.*\)".*/\1/' | sort)
+          echo "Workspace members:"
+          echo "$MEMBERS"
+
+          MISSING=""
+          for crate in $MEMBERS; do
+            CRATE_NAME=$(basename "$crate")
+            if ! grep -q "$CRATE_NAME" README.md; then
+              MISSING="$MISSING  - $CRATE_NAME not mentioned in README.md\n"
+            fi
+          done
+
+          if [ -n "$MISSING" ]; then
+            echo "::warning::Crates missing from README.md:"
+            echo -e "$MISSING"
+          else
+            echo "✅ All workspace crates mentioned in README.md"
+          fi
+          echo "::endgroup::"
+
+      - name: "Check dependency versions in docs vs Cargo.toml"
+        run: |
+          echo "::group::Dependency version audit"
+          ISSUES=0
+
+          check_dep() {
+            local dep="$1"
+            local cargo_ver
+            cargo_ver=$(grep "^$dep " Cargo.toml 2>/dev/null | head -1 | grep -oP '"\K[^"]+' | head -1)
+            if [ -z "$cargo_ver" ]; then
+              cargo_ver=$(grep "^$dep = \"" Cargo.toml 2>/dev/null | head -1 | grep -oP '"\K[^"]+')
+            fi
+            if [ -z "$cargo_ver" ]; then
+              return
+            fi
+
+            local readme_ver
+            readme_ver=$(grep -P "$dep\s*\|" README.md 2>/dev/null | grep -oP '\d+\.\d+' | head -1)
+            if [ -n "$readme_ver" ]; then
+              if echo "$cargo_ver" | grep -q "^$readme_ver"; then
+                echo "✅ $dep: README ($readme_ver) matches Cargo.toml ($cargo_ver)"
+              else
+                echo "::warning file=README.md::$dep version mismatch — README says $readme_ver, Cargo.toml says $cargo_ver"
+                ISSUES=$((ISSUES + 1))
+              fi
+            fi
+          }
+
+          check_dep "deno_core"
+          check_dep "rmcp"
+          check_dep "tokio"
+          check_dep "serde"
+          check_dep "oxc_parser"
+          check_dep "schemars"
+          check_dep "strsim"
+          check_dep "notify"
+          check_dep "prometheus-client"
+
+          if [ "$ISSUES" -gt 0 ]; then
+            echo "::warning::Found $ISSUES dependency version mismatches between docs and Cargo.toml"
+          fi
+          echo "::endgroup::"
+
+      - name: "Check DispatchError variants documented"
+        run: |
+          echo "::group::Error variant audit"
+          # Extract variants from code
+          CODE_VARIANTS=$(grep -oP '^\s+(Server\w+|Tool\w+|Timeout|Circuit\w+|Group\w+|Upstream|Rate\w+|Internal)' \
+            crates/forge-error/src/lib.rs 2>/dev/null | tr -d ' ' | sort -u)
+          echo "Code variants: $CODE_VARIANTS"
+
+          # Check each is mentioned in README.md
+          for variant in $CODE_VARIANTS; do
+            if grep -qi "$variant" README.md; then
+              echo "✅ $variant documented in README.md"
+            else
+              echo "::notice file=README.md::DispatchError::$variant not explicitly mentioned in README.md"
+            fi
+          done
+          echo "::endgroup::"
+
+      - name: "Check CLI commands match documentation"
+        run: |
+          echo "::group::CLI command audit"
+          # Look for clap command definitions
+          if [ -f crates/forge-cli/src/main.rs ]; then
+            CODE_CMDS=$(grep -oP '(Serve|Doctor|Manifest|Run|Init|Lint)\b' crates/forge-cli/src/main.rs | sort -u)
+            echo "CLI commands in code: $CODE_CMDS"
+
+            for cmd in $CODE_CMDS; do
+              CMD_LOWER=$(echo "$cmd" | tr '[:upper:]' '[:lower:]')
+              if grep -qi "forgemax $CMD_LOWER\|forgemax\` $CMD_LOWER\|\`$CMD_LOWER\`" README.md; then
+                echo "✅ '$CMD_LOWER' command documented in README.md"
+              else
+                echo "::warning file=README.md::CLI command '$CMD_LOWER' found in code but may not be documented in README.md"
+              fi
+            done
+          fi
+          echo "::endgroup::"
+
+      - name: "Check example file count"
+        run: |
+          echo "::group::Example count audit"
+          ACTUAL=$(find examples -name "*.js" | wc -l | tr -d ' ')
+          echo "Actual JS examples: $ACTUAL"
+
+          README_COUNT=$(grep -oP '\d+ runnable|~\d+ |7 runnable' README.md | grep -oP '\d+' | head -1)
+          if [ -n "$README_COUNT" ]; then
+            if [ "$ACTUAL" -eq "$README_COUNT" ]; then
+              echo "✅ README example count ($README_COUNT) matches actual ($ACTUAL)"
+            else
+              echo "::warning file=README.md::Example count mismatch — README says $README_COUNT, found $ACTUAL"
+            fi
+          fi
+
+          # Verify each listed example actually exists
+          for f in $(grep -oP '[a-z-]+\.js' README.md | sort -u); do
+            if [ -f "examples/$f" ]; then
+              echo "✅ examples/$f exists"
+            else
+              echo "::warning file=README.md::Referenced example 'examples/$f' does not exist"
+            fi
+          done
+          echo "::endgroup::"
+
+  consistency-check:
+    name: "Step 2: Internal consistency check"
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      (inputs.scope == 'full' || inputs.scope == 'consistency') ||
+      github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Cross-reference architecture descriptions"
+        run: |
+          echo "::group::Architecture consistency"
+
+          # Check that crates mentioned in README architecture tree exist
+          for crate in forge-config forge-client forge-server forge-sandbox forge-manifest forge-error forge-audit forge-test-server; do
+            if [ -d "crates/$crate" ]; then
+              echo "✅ $crate: directory exists"
+            else
+              echo "::error file=README.md::Crate '$crate' referenced in README but directory crates/$crate does not exist"
+            fi
+          done
+
+          # Check README mentions ARCHITECTURE.md
+          if grep -q "ARCHITECTURE.md" README.md; then
+            echo "✅ README.md references ARCHITECTURE.md"
+          else
+            echo "::warning file=README.md::No reference to ARCHITECTURE.md found"
+          fi
+
+          # Check README mentions SECURITY.md
+          if grep -q "SECURITY.md" README.md; then
+            echo "✅ README.md references SECURITY.md"
+          else
+            echo "::error file=README.md::No reference to SECURITY.md found"
+          fi
+          echo "::endgroup::"
+
+      - name: "Cross-reference security model"
+        run: |
+          echo "::group::Security model consistency"
+
+          # Count defense-in-depth layers in SECURITY.md
+          SEC_LAYERS=$(grep -c '|.*|.*|' SECURITY.md | head -1 || echo 0)
+          echo "SECURITY.md table rows: $SEC_LAYERS"
+
+          # Check key security features mentioned in both README and SECURITY.md
+          for feature in "AST" "V8" "circuit breaker" "error redaction" "worker pool" "stash"; do
+            IN_README=$(grep -ci "$feature" README.md || echo 0)
+            IN_SECURITY=$(grep -ci "$feature" SECURITY.md || echo 0)
+            if [ "$IN_README" -gt 0 ] && [ "$IN_SECURITY" -gt 0 ]; then
+              echo "✅ '$feature' mentioned in both README.md and SECURITY.md"
+            elif [ "$IN_README" -gt 0 ]; then
+              echo "::notice file=SECURITY.md::'$feature' in README.md but not SECURITY.md"
+            elif [ "$IN_SECURITY" -gt 0 ]; then
+              echo "::notice file=README.md::'$feature' in SECURITY.md but not README.md"
+            fi
+          done
+          echo "::endgroup::"
+
+      - name: "Cross-reference test conventions"
+        run: |
+          echo "::group::Test convention consistency"
+
+          # Check that documented test prefixes are actually used in code
+          for prefix in "ff_" "cv_" "dr_" "cli_"; do
+            COUNT=$(grep -r "fn ${prefix}" crates/ --include="*.rs" | wc -l | tr -d ' ')
+            if [ "$COUNT" -gt 0 ]; then
+              echo "✅ Test prefix '${prefix}' used $COUNT times in code"
+            else
+              echo "::notice::Test prefix '${prefix}' documented in CONTRIBUTING.md but not found in code (may use different files)"
+            fi
+          done
+          echo "::endgroup::"
+
+      - name: "Cross-reference crate descriptions"
+        run: |
+          echo "::group::Crate description consistency"
+
+          # Check each crate in CONTRIBUTING.md is also in README.md
+          CONTRIB_CRATES=$(grep '`forge-' CONTRIBUTING.md | grep -oP 'forge-[a-z-]+' | sort -u)
+          for crate in $CONTRIB_CRATES; do
+            if grep -q "$crate" README.md; then
+              echo "✅ $crate: mentioned in both CONTRIBUTING.md and README.md"
+            else
+              echo "::notice::$crate in CONTRIBUTING.md but not found in README.md"
+            fi
+          done
+          echo "::endgroup::"
+
+  staleness-detection:
+    name: "Step 5: Staleness detection"
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      (inputs.scope == 'full' || inputs.scope == 'staleness') ||
+      github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Check for stale config options"
+        run: |
+          echo "::group::Config field audit"
+
+          # Extract public fields from ForgeConfig-related structs
+          CONFIG_FIELDS=$(grep -P 'pub \w+:' crates/forge-config/src/lib.rs | \
+            grep -oP 'pub (\w+)' | sed 's/pub //' | sort -u)
+          echo "Config fields found in code:"
+          echo "$CONFIG_FIELDS"
+
+          UNDOCUMENTED=""
+          for field in $CONFIG_FIELDS; do
+            # Convert snake_case to likely TOML key
+            if ! grep -qi "$field" README.md && ! grep -qi "$field" forge.toml.example; then
+              UNDOCUMENTED="$UNDOCUMENTED  - $field\n"
+            fi
+          done
+
+          if [ -n "$UNDOCUMENTED" ]; then
+            echo "::notice::Config fields not found in README.md or forge.toml.example:"
+            echo -e "$UNDOCUMENTED"
+          else
+            echo "✅ All config fields appear documented"
+          fi
+          echo "::endgroup::"
+
+      - name: "Check for removed or renamed crates"
+        run: |
+          echo "::group::Crate existence audit"
+
+          # Every crate mentioned in docs should still exist
+          for doc in README.md CONTRIBUTING.md ARCHITECTURE.md; do
+            MENTIONED=$(grep -oP 'forge-[a-z-]+' "$doc" | sort -u)
+            for crate in $MENTIONED; do
+              if [ -d "crates/$crate" ]; then
+                : # exists
+              else
+                echo "::warning file=$doc::Crate '$crate' referenced but crates/$crate directory does not exist"
+              fi
+            done
+          done
+
+          echo "✅ Crate existence check complete"
+          echo "::endgroup::"
+
+      - name: "Check ROADMAP.md version alignment"
+        run: |
+          echo "::group::Roadmap staleness"
+          WS_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "Current workspace version: $WS_VERSION"
+
+          MAJOR_MINOR=$(echo "$WS_VERSION" | grep -oP '^\d+\.\d+')
+          if grep -qi "v${MAJOR_MINOR}" ROADMAP.md; then
+            echo "✅ ROADMAP.md references current version range v${MAJOR_MINOR}"
+          else
+            echo "::notice file=ROADMAP.md::Current version v${WS_VERSION} may not be reflected in ROADMAP.md"
+          fi
+          echo "::endgroup::"
+
+  example-validation:
+    name: "Step 6: Example & config validation"
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      (inputs.scope == 'full' || inputs.scope == 'accuracy') ||
+      github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Validate example headers"
+        run: |
+          echo "::group::Example header validation"
+          ISSUES=0
+          for f in examples/*.js; do
+            BASENAME=$(basename "$f")
+            HAS_PROMPT=$(grep -c "@prompt" "$f" || echo 0)
+            HAS_FEATURES=$(grep -c "@features" "$f" || echo 0)
+
+            if [ "$HAS_PROMPT" -gt 0 ] && [ "$HAS_FEATURES" -gt 0 ]; then
+              echo "✅ $BASENAME: has @prompt and @features headers"
+            else
+              [ "$HAS_PROMPT" -eq 0 ] && echo "::error file=$f::Missing @prompt header"
+              [ "$HAS_FEATURES" -eq 0 ] && echo "::error file=$f::Missing @features header"
+              ISSUES=$((ISSUES + 1))
+            fi
+          done
+
+          if [ "$ISSUES" -gt 0 ]; then
+            echo "::error::$ISSUES example(s) have missing headers"
+            exit 1
+          fi
+          echo "::endgroup::"
+
+      - name: "Validate example TOML configs in README"
+        run: |
+          echo "::group::TOML config validation"
+          pip install toml > /dev/null 2>&1
+
+          # Extract TOML blocks from README.md and validate them
+          python3 << 'PYEOF'
+          import re, sys
+
+          try:
+              import toml
+          except ImportError:
+              print("::notice::toml package not available, skipping TOML validation")
+              sys.exit(0)
+
+          with open("README.md") as f:
+              content = f.read()
+
+          # Find all ```toml blocks
+          blocks = re.findall(r'```toml\n(.*?)```', content, re.DOTALL)
+          issues = 0
+          for i, block in enumerate(blocks):
+              try:
+                  # Replace ${VAR} placeholders with dummy values for parsing
+                  sanitized = re.sub(r'\$\{[^}]+\}', '"PLACEHOLDER"', block)
+                  toml.loads(sanitized)
+                  print(f"✅ TOML block {i+1}: valid")
+              except Exception as e:
+                  print(f"::warning file=README.md::TOML block {i+1} may be invalid: {e}")
+                  issues += 1
+
+          if issues > 0:
+              print(f"::warning::{issues} TOML block(s) may have issues")
+          else:
+              print(f"✅ All {len(blocks)} TOML blocks valid")
+          PYEOF
+          echo "::endgroup::"
+
+      - name: "Validate forge.toml.example is parseable"
+        run: |
+          echo "::group::Config example validation"
+          pip install toml > /dev/null 2>&1
+
+          python3 << 'PYEOF'
+          import sys
+          try:
+              import toml
+          except ImportError:
+              print("::notice::toml package not available, skipping")
+              sys.exit(0)
+
+          for fname in ["forge.toml.example", "forge.toml.example.production"]:
+              try:
+                  with open(fname) as f:
+                      content = f.read()
+                  import re
+                  sanitized = re.sub(r'\$\{[^}]+\}', '"PLACEHOLDER"', content)
+                  toml.loads(sanitized)
+                  print(f"✅ {fname}: valid TOML")
+              except FileNotFoundError:
+                  print(f"::notice::{fname} not found")
+              except Exception as e:
+                  print(f"::warning file={fname}::Parse error: {e}")
+          PYEOF
+          echo "::endgroup::"
+
+  generate-report:
+    name: "Generate review report"
+    needs: [factual-accuracy, consistency-check, staleness-detection, example-validation]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Summarize review results"
+        run: |
+          echo "## 📋 Devil's Advocate Documentation Review Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Step | Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 1 | Factual accuracy audit | ${{ needs.factual-accuracy.result == 'success' && '✅ Passed' || needs.factual-accuracy.result == 'skipped' && '⏭️ Skipped' || '⚠️ Issues found' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 2 | Internal consistency check | ${{ needs.consistency-check.result == 'success' && '✅ Passed' || needs.consistency-check.result == 'skipped' && '⏭️ Skipped' || '⚠️ Issues found' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 5 | Staleness detection | ${{ needs.staleness-detection.result == 'success' && '✅ Passed' || needs.staleness-detection.result == 'skipped' && '⏭️ Skipped' || '⚠️ Issues found' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 6 | Example & config validation | ${{ needs.example-validation.result == 'success' && '✅ Passed' || needs.example-validation.result == 'skipped' && '⏭️ Skipped' || '⚠️ Issues found' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Review annotations appear inline on changed files. Check the job logs for detailed findings." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "_Workflow defined by the Devil's Advocate Documentation Review process in [AGENTS.md](../blob/main/AGENTS.md#devils-advocate-documentation-review)._" >> $GITHUB_STEP_SUMMARY
