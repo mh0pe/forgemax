@@ -14,4 +14,4 @@ Forgemax supports a wide range of automated workflows, including those from the 
 - Documentation Generation
 
 ## Agentics Workflows
-Agentics workflows are fully integrated. See the [Agentics Workflows](../agentics-docs/README.md) section for more.
+Agentics workflows are fully integrated. See the [Agentics Workflows](./agentics-docs/) section for more.

@@ -8,5 +8,5 @@ sidebar_position: 12
 
 These files are copied automatically from the repository root at build time.
 
-- [forge.toml.example](./forge.toml.example)
-- [forge.toml.example.production](./forge.toml.example.production)
+- [forge.toml.example](https://github.com/mh0pe/forgemax/blob/main/forge.toml.example)
+- [forge.toml.example.production](https://github.com/mh0pe/forgemax/blob/main/forge.toml.example.production)

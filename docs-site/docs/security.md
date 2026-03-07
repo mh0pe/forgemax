@@ -13,4 +13,4 @@ Forgemax is designed with a defense-in-depth approach. Key features:
 - Credential isolation
 - Worker environment clearing
 
-See the full [SECURITY.md](../../SECURITY.md) for details and best practices.
+See the full [SECURITY.md](https://github.com/mh0pe/forgemax/blob/main/SECURITY.md) for details and best practices.

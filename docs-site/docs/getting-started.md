@@ -21,4 +21,4 @@ sidebar_position: 1
 ## Next Steps
 - Explore [Workflows](./workflows.md)
 - Review [Security](./security.md)
-- Check out [Agentics Integrations](../agentics-docs/README.md)
+- Check out [Agentics Integrations](./agentics-docs/)
