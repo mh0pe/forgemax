@@ -1,0 +1,42 @@
+name: Sync README repo references
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update repo references in README
+        run: |
+          REPO="${{ github.repository }}"
+          sed -i \
+            -e "s|api.star-history.com/svg?repos=[^&]*&|api.star-history.com/svg?repos=${REPO}\&|g" \
+            -e "s|star-history.com/#[^&]*&|star-history.com/#${REPO}\&|g" \
+            -e "s|contrib.rocks/image?repo=[^)]*)|contrib.rocks/image?repo=${REPO})|g" \
+            -e "s|github.com/[^/]*/[^/]*/graphs/contributors|github.com/${REPO}/graphs/contributors|g" \
+            README.md
+
+      - name: Check for changes
+        id: diff
+        run: |
+          if git diff --quiet README.md; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit and push
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git commit -m "chore: sync README repo references [skip ci]"
+          git push
