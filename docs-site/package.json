@@ -41,7 +41,6 @@
   "overrides": {
     "serialize-javascript": "7.0.4"
   },
-
   "engines": {
     "node": ">=20.0"
   }
