@@ -296,10 +296,7 @@ impl McpClient {
         let result = self
             .inner
             .peer()
-            .read_resource(rmcp::model::ReadResourceRequestParams {
-                uri: uri.to_string(),
-                meta: None,
-            })
+            .read_resource(rmcp::model::ReadResourceRequestParams::new(uri))
             .await
             .with_context(|| {
                 format!(
@@ -364,11 +361,12 @@ impl ToolDispatcher for McpClient {
         let result: CallToolResult = self
             .inner
             .peer()
-            .call_tool(CallToolRequestParams {
-                meta: None,
-                name: Cow::Owned(tool.to_string()),
-                arguments,
-                task: None,
+            .call_tool({
+                let mut params = CallToolRequestParams::new(Cow::Owned(tool.to_string()));
+                if let Some(args) = arguments {
+                    params = params.with_arguments(args);
+                }
+                params
             })
             .await
             .map_err(|e| forge_error::DispatchError::Upstream {

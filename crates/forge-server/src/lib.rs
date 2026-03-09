@@ -421,51 +421,43 @@ impl ServerHandler for ForgeServer {
             manifest.total_tools(),
         );
 
-        ServerInfo {
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            instructions: Some(format!(
-                "Forgemax Code Mode Gateway ({stats}). \
-                 Use search() to discover available tools, then execute() to call them.\n\
-                 \n\
-                 Both tools take a `code` parameter containing a JavaScript async arrow function.\n\
-                 Example: `async () => {{ return manifest.servers.map(s => s.name); }}`\n\
-                 \n\
-                 Manifest shape:\n\
-                 - manifest.servers: Array of {{ name, description, categories }}\n\
-                 - server.categories: Object (NOT array) keyed by category name, e.g. categories[\"ast\"]\n\
-                 - Use Object.entries(s.categories) or Object.values(s.categories) to iterate categories\n\
-                 - Each category has .tools (Array) with .name, .description, .input_schema\n\
-                 - Always check a tool's input_schema.required before calling it\n\
-                 \n\
-                 Sandboxed environment — no filesystem, network, or module imports (import/require/eval are blocked). \
-                 Use forge.callTool(server, tool, args) for all external operations.\n\
-                 \n\
-                 When calling tools, use the tool name only (e.g. \"find_symbols\"), \
-                 not the category-prefixed form (e.g. NOT \"general.find_symbols\").\n\
-                 \n\
-                 Additional APIs (execute mode only):\n\
-                 - forge.readResource(server, uri) — read MCP resources from downstream servers\n\
-                 - forge.stash.put(key, value, {{ttl?}}) / .get(key) / .delete(key) / .keys() — \
-                 session-scoped key-value store for sharing data across executions\n\
-                 - forge.parallel(calls, opts) — bounded concurrent execution of tool/resource calls\n\
-                 \n\
-                 ## TypeScript API Definitions\n\
-                 \n\
-                 ```typescript\n\
-                 {dts}\n\
-                 ```",
-                dts = forge_manifest::FORGE_DTS
-            )),
-            server_info: Implementation {
-                name: "forge".into(),
-                version: env!("CARGO_PKG_VERSION").into(),
-                title: None,
-                description: None,
-                icons: None,
-                website_url: None,
-            },
-            ..Default::default()
-        }
+        ServerInfo::new(
+            ServerCapabilities::builder().enable_tools().build(),
+        )
+        .with_instructions(format!(
+            "Forgemax Code Mode Gateway ({stats}). \
+             Use search() to discover available tools, then execute() to call them.\n\
+             \n\
+             Both tools take a `code` parameter containing a JavaScript async arrow function.\n\
+             Example: `async () => {{ return manifest.servers.map(s => s.name); }}`\n\
+             \n\
+             Manifest shape:\n\
+             - manifest.servers: Array of {{ name, description, categories }}\n\
+             - server.categories: Object (NOT array) keyed by category name, e.g. categories[\"ast\"]\n\
+             - Use Object.entries(s.categories) or Object.values(s.categories) to iterate categories\n\
+             - Each category has .tools (Array) with .name, .description, .input_schema\n\
+             - Always check a tool's input_schema.required before calling it\n\
+             \n\
+             Sandboxed environment — no filesystem, network, or module imports (import/require/eval are blocked). \
+             Use forge.callTool(server, tool, args) for all external operations.\n\
+             \n\
+             When calling tools, use the tool name only (e.g. \"find_symbols\"), \
+             not the category-prefixed form (e.g. NOT \"general.find_symbols\").\n\
+             \n\
+             Additional APIs (execute mode only):\n\
+             - forge.readResource(server, uri) — read MCP resources from downstream servers\n\
+             - forge.stash.put(key, value, {{ttl?}}) / .get(key) / .delete(key) / .keys() — \
+             session-scoped key-value store for sharing data across executions\n\
+             - forge.parallel(calls, opts) — bounded concurrent execution of tool/resource calls\n\
+             \n\
+             ## TypeScript API Definitions\n\
+             \n\
+             ```typescript\n\
+             {dts}\n\
+             ```",
+            dts = forge_manifest::FORGE_DTS
+        ))
+        .with_server_info(Implementation::new("forge", env!("CARGO_PKG_VERSION")))
     }
 }
 
