@@ -1,5 +1,8 @@
 name: Compile workflows with latest gh-aw release
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]
