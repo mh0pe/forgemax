@@ -78,7 +78,7 @@ arc-swap = "1"
 notify = "8"
 
 # HTTP client (lightweight, blocking)
-ureq = "2"
+ureq = "3"
 
 # Security / audit
 sha2 = "0.10"
